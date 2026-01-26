@@ -1,0 +1,8 @@
+# Example Terraform Variables
+# Copy this file to terraform.tfvars and customize as needed
+
+# AWS region to deploy resources
+# aws_region = "us-west-2"
+
+# Project name (used for resource naming)
+# project_name = "my-portal"

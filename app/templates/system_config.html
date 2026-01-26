@@ -1,0 +1,305 @@
+{% extends "base.html" %}
+
+{% block title %}SYSTEM CONFIGURATION - CAPSULE PORTAL{% endblock %}
+
+{% block content %}
+<div class="crt-container">
+    <pre class="ascii-art">
+ ███████╗██╗   ██╗███████╗████████╗███████╗███╗   ███╗
+ ██╔════╝╚██╗ ██╔╝██╔════╝╚══██╔══╝██╔════╝████╗ ████║
+ ███████╗ ╚████╔╝ ███████╗   ██║   █████╗  ██╔████╔██║
+ ╚════██║  ╚██╔╝  ╚════██║   ██║   ██╔══╝  ██║╚██╔╝██║
+ ███████║   ██║   ███████║   ██║   ███████╗██║ ╚═╝ ██║
+ ╚══════╝   ╚═╝   ╚══════╝   ╚═╝   ╚══════╝╚═╝     ╚═╝
+    </pre>
+
+    <div class="content-box">
+        <h2>⚙ SYSTEM CONFIGURATION & ARCHITECTURE</h2>
+
+        <!-- Current System Information -->
+        <div class="info-section">
+            <h3>📊 CURRENT SYSTEM STATUS</h3>
+            <table style="width: 100%; margin-top: 1rem; font-size: 0.9rem;">
+                <tr>
+                    <td style="padding: 0.5rem;"><strong>Instance ID:</strong></td>
+                    <td style="padding: 0.5rem; font-family: 'Courier Prime', monospace;">{{ system_info.instance_id }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 0.5rem;"><strong>Instance Type:</strong></td>
+                    <td style="padding: 0.5rem;">{{ system_info.instance_type }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 0.5rem;"><strong>Availability Zone:</strong></td>
+                    <td style="padding: 0.5rem;">{{ system_info.availability_zone }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 0.5rem;"><strong>Private IP:</strong></td>
+                    <td style="padding: 0.5rem; font-family: 'Courier Prime', monospace;">{{ system_info.private_ip }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 0.5rem;"><strong>Public IP:</strong></td>
+                    <td style="padding: 0.5rem; font-family: 'Courier Prime', monospace;">{{ system_info.public_ip }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 0.5rem;"><strong>Hostname:</strong></td>
+                    <td style="padding: 0.5rem; font-family: 'Courier Prime', monospace;">{{ system_info.hostname }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 0.5rem;"><strong>User Pool ID:</strong></td>
+                    <td style="padding: 0.5rem; font-family: 'Courier Prime', monospace; font-size: 0.75rem;">{{ system_info.user_pool_id }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 0.5rem;"><strong>AWS Region:</strong></td>
+                    <td style="padding: 0.5rem;">{{ system_info.aws_region }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 0.5rem;"><strong>System Time:</strong></td>
+                    <td style="padding: 0.5rem;">{{ system_info.current_time }}</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Architecture Diagram -->
+        <div class="info-section" style="margin-top: 2rem;">
+            <h3>🗺 INFRASTRUCTURE ARCHITECTURE MAP</h3>
+            <pre style="font-family: 'Courier Prime', monospace; font-size: 0.7rem; line-height: 1.3; overflow-x: auto; background: rgba(0, 0, 0, 0.5); padding: 1.5rem; border: 1px solid rgba(0, 255, 0, 0.3);">
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              CAPSULE ACCESS PORTAL                                   │
+│                         COGNITO + ALB + EC2 ARCHITECTURE                            │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+                                  ┌──────────────┐
+                                  │   Internet   │
+                                  │   (Users)    │
+                                  └───────┬──────┘
+                                          │
+                                          │ HTTPS
+                                          ▼
+                    ┌────────────────────────────────────────┐
+                    │         Route53 DNS                    │
+                    │  portal.capsule-playground.com         │
+                    │  → ALB DNS Name (A Record Alias)       │
+                    └────────────────┬───────────────────────┘
+                                     │
+                                     │
+                                     ▼
+        ╔════════════════════════════════════════════════════════════════╗
+        ║              VPC: 10.0.0.0/16 (us-east-1)                     ║
+        ║                                                                 ║
+        ║  ┌────────────────────────────────────────────────────────┐   ║
+        ║  │  Public Subnet 1: 10.0.1.0/24 (us-east-1a)            │   ║
+        ║  │                                                         │   ║
+        ║  │  ┌──────────────────────────────────────────────┐     │   ║
+        ║  │  │   Application Load Balancer (ALB)            │     │   ║
+        ║  │  │   • Security Group: Allow 80, 443            │     │   ║
+        ║  │  │   • Listener: Port 443 (HTTPS)               │     │   ║
+        ║  │  │   • Certificate: ACM (*.capsule-playground)  │     │   ║
+        ║  │  │   • Auth: Cognito authenticate-cognito       │     │   ║
+        ║  │  └──────────────┬───────────────────────────────┘     │   ║
+        ║  │                 │                                      │   ║
+        ║  └─────────────────┼──────────────────────────────────────┘   ║
+        ║                    │                                           ║
+        ║                    │ Forwards to Target Group                  ║
+        ║                    │ (Port 8000)                               ║
+        ║                    │                                           ║
+        ║  ┌─────────────────▼──────────────────────────────────────┐   ║
+        ║  │  Public Subnet 1: 10.0.1.0/24                          │   ║
+        ║  │                                                         │   ║
+        ║  │  ┌──────────────────────────────────────────────┐     │   ║
+        ║  │  │   EC2 Instance ({{ system_info.instance_id }})           │     │   ║
+        ║  │  │   • Type: {{ system_info.instance_type }}                    │     │   ║
+        ║  │  │   • Private IP: {{ system_info.private_ip }}             │     │   ║
+        ║  │  │   • Public IP: {{ system_info.public_ip }}              │     │   ║
+        ║  │  │   • Security Group: Port 8000 (from ALB only)│     │   ║
+        ║  │  │   • FastAPI App on port 8000                 │     │   ║
+        ║  │  │   • IAM Role: Cognito AdminListGroupsForUser│     │   ║
+        ║  │  └──────────────────────────────────────────────┘     │   ║
+        ║  │                                                         │   ║
+        ║  └─────────────────────────────────────────────────────────┘   ║
+        ║                                                                 ║
+        ║  ┌────────────────────────────────────────────────────────┐   ║
+        ║  │  Public Subnet 2: 10.0.2.0/24 (us-east-1b)            │   ║
+        ║  │  (For ALB high availability)                           │   ║
+        ║  └────────────────────────────────────────────────────────┘   ║
+        ║                                                                 ║
+        ╚════════════════════════════════════════════════════════════════╝
+
+                                     │
+                                     │ AWS API Calls
+                                     ▼
+                    ┌─────────────────────────────────────┐
+                    │     AWS Cognito User Pool           │
+                    │  • Authentication                   │
+                    │  • Groups: engineering, hr, etc     │
+                    │  • MFA: TOTP enabled                │
+                    │  • Region: {{ system_info.aws_region }}         │
+                    └─────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                              DATA FLOW DIAGRAM                                       │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+Step 1: User → portal.capsule-playground.com
+        │
+        ├─ DNS resolves to ALB IP addresses
+        │
+Step 2: ALB → Check for auth cookie (AWSELBAuthSessionCookie)
+        │
+        ├─ No cookie? Redirect to Cognito hosted UI
+        │
+Step 3: User → Logs in at Cognito (email + password + MFA)
+        │
+        ├─ Cognito validates credentials
+        │
+Step 4: Cognito → Redirects back to ALB with auth code
+        │
+        ├─ ALB validates code with Cognito
+        │
+Step 5: ALB → Sets session cookies
+        │    → Adds x-amzn-oidc-data JWT header
+        │    → Forwards request to EC2:8000
+        │
+Step 6: FastAPI App → Extracts email from JWT header
+        │             → Queries Cognito for user groups (cached 60s)
+        │             → Checks authorization for route
+        │             → Returns page or redirect to /denied
+        │
+Step 7: Response → ALB → User browser
+
+
+┌─────────────────────────────────────────────────────────────────────────────────────┐
+│                           SECURITY MODEL                                             │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────┐
+│  NETWORK LAYER                          │
+│  • EC2 not directly accessible         │
+│  • Security groups: ALB → EC2 only     │
+│  • No public SSH access configured     │
+└────────────────────────────────────────┘
+                │
+                ▼
+┌────────────────────────────────────────┐
+│  AUTHENTICATION (ALB)                   │
+│  • Cognito OAuth2 code flow            │
+│  • Session managed by ALB              │
+│  • JWT in x-amzn-oidc-data header      │
+│  • Certificate: ACM (auto-renewal)     │
+└────────────────────────────────────────┘
+                │
+                ▼
+┌────────────────────────────────────────┐
+│  AUTHORIZATION (Application)            │
+│  • Group-based access control          │
+│  • Deny by default                     │
+│  • Per-user Cognito queries            │
+│  • Minimal IAM permissions             │
+└────────────────────────────────────────┘
+            </pre>
+        </div>
+
+        <!-- Infrastructure Components -->
+        <div class="info-section" style="margin-top: 2rem;">
+            <h3>🏗 INFRASTRUCTURE COMPONENTS</h3>
+            <table style="width: 100%; margin-top: 1rem;">
+                <thead>
+                    <tr>
+                        <th>Component</th>
+                        <th>Purpose</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>Route53</td>
+                        <td>DNS management</td>
+                        <td><span style="color: #00ff00;">● Active</span></td>
+                    </tr>
+                    <tr>
+                        <td>ACM Certificate</td>
+                        <td>SSL/TLS termination</td>
+                        <td><span style="color: #00ff00;">● Valid</span></td>
+                    </tr>
+                    <tr>
+                        <td>Application Load Balancer</td>
+                        <td>Traffic distribution & authentication</td>
+                        <td><span style="color: #00ff00;">● Running</span></td>
+                    </tr>
+                    <tr>
+                        <td>Target Group</td>
+                        <td>Health checks & routing</td>
+                        <td><span style="color: #00ff00;">● Healthy</span></td>
+                    </tr>
+                    <tr>
+                        <td>EC2 Instance</td>
+                        <td>FastAPI application server</td>
+                        <td><span style="color: #00ff00;">● Running</span></td>
+                    </tr>
+                    <tr>
+                        <td>Cognito User Pool</td>
+                        <td>User authentication & management</td>
+                        <td><span style="color: #00ff00;">● Active</span></td>
+                    </tr>
+                    <tr>
+                        <td>VPC</td>
+                        <td>Network isolation</td>
+                        <td><span style="color: #00ff00;">● Active</span></td>
+                    </tr>
+                    <tr>
+                        <td>Security Groups</td>
+                        <td>Firewall rules</td>
+                        <td><span style="color: #00ff00;">● Enforced</span></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Key Features -->
+        <div class="info-section" style="margin-top: 2rem;">
+            <h3>✨ KEY FEATURES</h3>
+            <ul style="margin-left: 2rem; margin-top: 1rem;">
+                <li>✓ Instance ID-based targeting (resilient to IP changes)</li>
+                <li>✓ ALB handles authentication (OAuth2 code flow)</li>
+                <li>✓ Application handles authorization (group-based)</li>
+                <li>✓ MFA enabled (TOTP via authenticator apps)</li>
+                <li>✓ Session caching (60s TTL for performance)</li>
+                <li>✓ Health checks (bypass auth for monitoring)</li>
+                <li>✓ HTTPS with auto-renewing ACM certificate</li>
+                <li>✓ High availability across 2 AZs</li>
+            </ul>
+        </div>
+
+        <!-- Cost Estimate -->
+        <div class="info-section" style="margin-top: 2rem; background: rgba(0, 50, 0, 0.3);">
+            <h3>💰 ESTIMATED MONTHLY COST</h3>
+            <table style="width: 100%; margin-top: 1rem;">
+                <tr>
+                    <td>EC2 t3.micro</td>
+                    <td style="text-align: right;">~$7.50</td>
+                </tr>
+                <tr>
+                    <td>Application Load Balancer</td>
+                    <td style="text-align: right;">~$16.20</td>
+                </tr>
+                <tr>
+                    <td>Cognito (< 50k MAU)</td>
+                    <td style="text-align: right;">Free</td>
+                </tr>
+                <tr>
+                    <td>Data Transfer</td>
+                    <td style="text-align: right;">~$1.00</td>
+                </tr>
+                <tr style="border-top: 2px solid #00ff00;">
+                    <td><strong>TOTAL</strong></td>
+                    <td style="text-align: right;"><strong>~$25-30/month</strong></td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="nav-links" style="margin-top: 3rem;">
+            <a href="/">← RETURN TO HOME</a>
+        </div>
+    </div>
+</div>
+{% endblock %}

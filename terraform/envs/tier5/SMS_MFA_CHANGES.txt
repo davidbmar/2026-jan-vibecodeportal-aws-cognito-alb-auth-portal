@@ -1,0 +1,106 @@
+=============================================================================
+EXACT CHANGES NEEDED TO ENABLE SMS MFA IN main.tf
+=============================================================================
+
+CHANGE #1: Update MFA configuration (around line 194)
+-----------------------------------------------------------------------------
+
+BEFORE (current):
+  mfa_configuration = "ON"
+
+  software_token_mfa_configuration {
+    enabled = true
+  }
+
+  account_recovery_setting {
+    recovery_mechanism {
+
+
+AFTER (with SMS support):
+  mfa_configuration = "OPTIONAL"  # Changed: users choose TOTP or SMS
+
+  software_token_mfa_configuration {
+    enabled = true
+  }
+
+  # NEW: SMS MFA Configuration
+  sms_configuration {
+    external_id    = "${var.project_name}-external"
+    sns_caller_arn = aws_iam_role.cognito_sms_role.arn
+  }
+
+  sms_authentication_message = "Your Employee Portal authentication code is {####}"
+
+  account_recovery_setting {
+    recovery_mechanism {
+
+
+=============================================================================
+CHANGE #2: Add phone_number schema (after email schema, around line 217)
+-----------------------------------------------------------------------------
+
+BEFORE (current):
+  schema {
+    name                = "email"
+    attribute_data_type = "String"
+    required            = true
+    mutable             = true
+
+    string_attribute_constraints {
+      min_length = 1
+      max_length = 256
+    }
+  }
+
+  tags = {
+    Name = "${var.project_name}-user-pool"
+  }
+}
+
+
+AFTER (with phone number support):
+  schema {
+    name                = "email"
+    attribute_data_type = "String"
+    required            = true
+    mutable             = true
+
+    string_attribute_constraints {
+      min_length = 1
+      max_length = 256
+    }
+  }
+
+  # NEW: Phone number schema for SMS MFA
+  schema {
+    name                = "phone_number"
+    attribute_data_type = "String"
+    required            = false  # Optional: only if user wants SMS
+    mutable             = true
+
+    string_attribute_constraints {
+      min_length = 1
+      max_length = 2048
+    }
+  }
+
+  tags = {
+    Name = "${var.project_name}-user-pool"
+  }
+}
+
+
+=============================================================================
+SUMMARY OF CHANGES
+=============================================================================
+
+1. Line 194: Change "ON" to "OPTIONAL"
+2. After line 198: Add sms_configuration block (5 lines)
+3. After line 198: Add sms_authentication_message (1 line)
+4. After line 217: Add phone_number schema block (13 lines)
+
+Total: 2 edits, 19 new lines
+
+Then: terraform apply
+
+=============================================================================

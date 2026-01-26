@@ -1,0 +1,44 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DeploymentBasicPermissions",
+      "Effect": "Allow",
+      "Action": [
+        "cognito-idp:UpdateUserPool",
+        "cognito-idp:DescribeUserPool",
+        "iam:CreateRole",
+        "iam:PutRolePolicy",
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies"
+      ],
+      "Resource": [
+        "arn:aws:cognito-idp:us-east-1:821850226835:userpool/*",
+        "arn:aws:iam::821850226835:role/employee-portal-*"
+      ]
+    },
+    {
+      "Sid": "ScopedPassRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::821850226835:role/employee-portal-cognito-sms-role",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "cognito-idp.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "PreventPassRoleEscalation",
+      "Effect": "Deny",
+      "Action": "iam:PassRole",
+      "Resource": "*",
+      "Condition": {
+        "StringNotEquals": {
+          "iam:PassedToService": "cognito-idp.amazonaws.com"
+        }
+      }
+    }
+  ]
+}

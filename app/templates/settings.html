@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+
+{% block title %}ACCOUNT SETTINGS - CAPSULE PORTAL{% endblock %}
+
+{% block content %}
+<div class="crt-container">
+    <pre class="ascii-art">
+ ███████╗███████╗████████╗████████╗██╗███╗   ██╗ ██████╗ ███████╗
+ ██╔════╝██╔════╝╚══██╔══╝╚══██╔══╝██║████╗  ██║██╔════╝ ██╔════╝
+ ███████╗█████╗     ██║      ██║   ██║██╔██╗ ██║██║  ███╗███████╗
+ ╚════██║██╔══╝     ██║      ██║   ██║██║╚██╗██║██║   ██║╚════██║
+ ███████║███████╗   ██║      ██║   ██║██║ ╚████║╚██████╔╝███████║
+ ╚══════╝╚══════╝   ╚═╝      ╚═╝   ╚═╝╚═╝  ╚═══╝ ╚═════╝ ╚══════╝
+    </pre>
+
+    <div class="content-box">
+        <h2>🔐 ACCOUNT SETTINGS</h2>
+
+        <p style="margin-bottom: 2rem;">Current User: <strong>{{ email }}</strong></p>
+
+        <!-- MFA Configuration Section -->
+        <div class="info-section">
+            <h3>🛡️ MULTI-FACTOR AUTHENTICATION (MFA)</h3>
+
+            <div style="background: rgba(0, 20, 0, 0.5); padding: 1.5rem; margin-top: 1rem; border-left: 3px solid #00ff00;">
+                <p style="margin-bottom: 1rem;"><strong>Why MFA Matters:</strong></p>
+                <p style="margin-bottom: 1rem;">MFA adds a second layer of security by requiring both your password AND a code from your device. Even if someone steals your password, they cannot access your account without the second factor.</p>
+            </div>
+
+            <h4 style="margin-top: 2rem; margin-bottom: 1rem; color: #00ff00;">Choose Your MFA Method:</h4>
+
+            <!-- TOTP Option -->
+            <div style="background: rgba(0, 50, 0, 0.3); border: 2px solid #00ff00; padding: 1.5rem; margin-bottom: 1rem;">
+                <h4 style="color: #00ff00; margin-bottom: 0.5rem;">
+                    ✅ TOTP - Time-based One-Time Password (RECOMMENDED)
+                </h4>
+                <p style="font-size: 0.85rem; margin-bottom: 1rem; opacity: 0.9;">
+                    <strong>TOTP</strong> stands for <strong>Time-based One-Time Password</strong>
+                </p>
+
+                <div style="margin: 1rem 0;">
+                    <p style="font-size: 0.9rem;"><strong>How it works:</strong></p>
+                    <ul style="margin-left: 2rem; margin-top: 0.5rem; font-size: 0.9rem;">
+                        <li>Install an authenticator app (Google Authenticator, Authy, Microsoft Authenticator)</li>
+                        <li>Scan a QR code during setup</li>
+                        <li>App generates a new 6-digit code every 30 seconds</li>
+                        <li>Enter the code when logging in</li>
+                    </ul>
+                </div>
+
+                <div style="background: rgba(0, 100, 0, 0.3); padding: 1rem; margin: 1rem 0; border-left: 3px solid #00ff00;">
+                    <p style="font-size: 0.9rem; margin-bottom: 0.5rem;"><strong>✅ Security Benefits:</strong></p>
+                    <ul style="margin-left: 2rem; font-size: 0.85rem;">
+                        <li><strong>Most Secure:</strong> Not vulnerable to SIM swapping attacks</li>
+                        <li><strong>Works Offline:</strong> No cell signal or internet required</li>
+                        <li><strong>Industry Standard:</strong> Used by banks, government, tech companies</li>
+                        <li><strong>Free:</strong> No per-use costs</li>
+                        <li><strong>Private:</strong> Codes generated on your device only</li>
+                    </ul>
+                </div>
+
+                <a href="/mfa-setup" class="btn-primary" style="display: inline-block; margin-top: 1rem;">
+                    SET UP TOTP (AUTHENTICATOR APP)
+                </a>
+            </div>
+
+            <!-- SMS Option -->
+            <div style="background: rgba(50, 50, 0, 0.2); border: 2px solid rgba(255, 255, 0, 0.5); padding: 1.5rem; margin-bottom: 1rem;">
+                <h4 style="color: #ffff00; margin-bottom: 0.5rem;">
+                    📱 SMS - Text Message Codes
+                </h4>
+                <p style="font-size: 0.85rem; margin-bottom: 1rem; opacity: 0.9;">
+                    Receive authentication codes via text message
+                </p>
+
+                <div style="margin: 1rem 0;">
+                    <p style="font-size: 0.9rem;"><strong>How it works:</strong></p>
+                    <ul style="margin-left: 2rem; margin-top: 0.5rem; font-size: 0.9rem;">
+                        <li>Add your phone number to your account</li>
+                        <li>Receive a 6-digit code via SMS when logging in</li>
+                        <li>Enter the code to complete login</li>
+                    </ul>
+                </div>
+
+                <div class="warning-box" style="margin: 1rem 0;">
+                    <p style="font-size: 0.9rem; margin-bottom: 0.5rem;"><strong>⚠️ Security Considerations:</strong></p>
+                    <ul style="margin-left: 2rem; font-size: 0.85rem;">
+                        <li><strong>Less Secure:</strong> Vulnerable to SIM swapping attacks</li>
+                        <li><strong>SMS Interception:</strong> Messages can be intercepted</li>
+                        <li><strong>Carrier Dependent:</strong> Requires cell service</li>
+                        <li><strong>Small Cost:</strong> ~$0.0065 per SMS (paid by organization)</li>
+                    </ul>
+                </div>
+
+                <p style="font-size: 0.9rem; margin-top: 1rem; opacity: 0.8;">
+                    <em>SMS MFA is convenient but less secure than TOTP. We recommend TOTP for sensitive accounts.</em>
+                </p>
+
+                <button onclick="showSmsSetup()" class="btn-secondary" style="display: inline-block; margin-top: 1rem;">
+                    SET UP SMS MFA
+                </button>
+            </div>
+
+            <!-- Current MFA Status -->
+            <div style="background: rgba(0, 0, 50, 0.3); border: 1px solid rgba(0, 150, 255, 0.5); padding: 1.5rem; margin-top: 1.5rem;">
+                <h4 style="color: #00aaff; margin-bottom: 1rem;">📊 Your Current MFA Status</h4>
+                <p style="font-size: 0.9rem;">
+                    To check or modify your MFA settings, you need to log out and reconfigure during your next login,
+                    or contact an administrator.
+                </p>
+                <p style="font-size: 0.85rem; margin-top: 0.5rem; opacity: 0.7;">
+                    Note: MFA configuration happens through AWS Cognito's authentication flow.
+                </p>
+            </div>
+        </div>
+
+        <!-- Password Change Section -->
+        <div class="info-section" style="margin-top: 2rem;">
+            <h3>🔑 CHANGE PASSWORD</h3>
+
+            <div style="background: rgba(0, 20, 0, 0.5); padding: 1.5rem; margin-top: 1rem; border-left: 3px solid #00ff00;">
+                <p style="margin-bottom: 1rem;"><strong>Password Requirements:</strong></p>
+                <ul style="margin-left: 2rem; font-size: 0.9rem;">
+                    <li>Minimum 8 characters</li>
+                    <li>At least one uppercase letter (A-Z)</li>
+                    <li>At least one lowercase letter (a-z)</li>
+                    <li>At least one number (0-9)</li>
+                    <li>At least one special character (!@#$%^&*)</li>
+                </ul>
+            </div>
+
+            <div style="margin-top: 1.5rem;">
+                <a href="/password-reset-info" class="btn-primary" style="display: inline-block;">
+                    🔑 CHANGE PASSWORD
+                </a>
+                <p style="font-size: 0.85rem; margin-top: 1rem; opacity: 0.7;">
+                    You will be logged out and redirected to the password reset flow.
+                </p>
+            </div>
+        </div>
+
+        <!-- Account Information -->
+        <div class="info-section" style="margin-top: 2rem;">
+            <h3>👤 ACCOUNT INFORMATION</h3>
+
+            <table style="width: 100%; margin-top: 1rem; font-size: 0.9rem;">
+                <tr>
+                    <td style="padding: 0.5rem; width: 30%;"><strong>Email:</strong></td>
+                    <td style="padding: 0.5rem;">{{ email }}</td>
+                </tr>
+                <tr>
+                    <td style="padding: 0.5rem;"><strong>Groups:</strong></td>
+                    <td style="padding: 0.5rem;">
+                        {% for group in groups %}
+                        <span class="badge {% if group == 'admins' %}admin{% endif %}" style="font-size: 0.75rem; padding: 0.3rem 0.8rem;">{{ group }}</span>
+                        {% endfor %}
+                    </td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Security Best Practices -->
+        <div class="info-section" style="margin-top: 2rem; background: rgba(0, 50, 50, 0.3);">
+            <h3>💡 SECURITY BEST PRACTICES</h3>
+
+            <ul style="margin-left: 2rem; margin-top: 1rem; font-size: 0.9rem; line-height: 1.8;">
+                <li><strong>Enable MFA:</strong> Always use MFA to protect your account</li>
+                <li><strong>Choose TOTP:</strong> Authenticator apps (TOTP) are more secure than SMS</li>
+                <li><strong>Strong Passwords:</strong> Use unique passwords for each service</li>
+                <li><strong>Update Regularly:</strong> Change passwords periodically</li>
+                <li><strong>Never Share:</strong> Don't share passwords or MFA codes with anyone</li>
+                <li><strong>Backup Codes:</strong> Save your authenticator backup codes in a secure location</li>
+            </ul>
+        </div>
+
+        <div class="nav-links" style="margin-top: 3rem;">
+            <a href="/">← RETURN TO HOME</a>
+        </div>
+    </div>
+</div>
+
+<!-- SMS Setup Modal -->
+<div id="smsSetupModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.95); z-index: 1000; align-items: center; justify-content: center;">
+    <div style="background: #000; border: 2px solid #ffff00; padding: 2rem; max-width: 600px; box-shadow: 0 0 30px rgba(255, 255, 0, 0.5);">
+        <h3 style="color: #ffff00; margin-bottom: 1rem;">📱 SMS MFA SETUP</h3>
+
+        <div class="warning-box" style="margin-bottom: 1.5rem;">
+            <p style="font-size: 0.9rem;">
+                <strong>Note:</strong> SMS MFA must be configured during your next login through the Cognito authentication flow.
+            </p>
+        </div>
+
+        <div style="margin-bottom: 1.5rem;">
+            <p style="margin-bottom: 1rem;"><strong>To enable SMS MFA:</strong></p>
+            <ol style="margin-left: 2rem; font-size: 0.9rem; line-height: 1.8;">
+                <li>Contact your administrator to add your phone number</li>
+                <li>Log out of the portal</li>
+                <li>Log back in - you'll be prompted for phone verification</li>
+                <li>Enter your phone number in E.164 format: +[country code][number]
+                    <div style="margin-top: 0.5rem; padding: 0.5rem; background: rgba(255, 255, 0, 0.1); font-family: 'Courier Prime', monospace; font-size: 0.85rem;">
+                        Example: +12025551234 (US)<br>
+                        Example: +447911123456 (UK)
+                    </div>
+                </li>
+                <li>You'll receive a verification code via SMS</li>
+                <li>Enter the code to complete setup</li>
+            </ol>
+        </div>
+
+        <p style="font-size: 0.85rem; opacity: 0.7; margin-bottom: 1.5rem;">
+            <strong>Administrator Note:</strong> Use AWS CLI or Console to add phone_number attribute to the user.
+        </p>
+
+        <div style="display: flex; gap: 1rem;">
+            <button type="button" onclick="closeSmsSetup()" class="btn-secondary" style="flex: 1;">CLOSE</button>
+        </div>
+    </div>
+</div>
+
+<script>
+function showSmsSetup() {
+    document.getElementById('smsSetupModal').style.display = 'flex';
+}
+
+function closeSmsSetup() {
+    document.getElementById('smsSetupModal').style.display = 'none';
+}
+
+// Close modal when clicking outside
+document.getElementById('smsSetupModal').addEventListener('click', function(e) {
+    if (e.target === this) closeSmsSetup();
+});
+</script>
+{% endblock %}
