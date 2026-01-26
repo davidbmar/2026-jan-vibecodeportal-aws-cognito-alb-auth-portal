@@ -36,3 +36,6 @@ Thumbs.db
 *.pem
 *.key
 credentials.json
+
+# Claude Code
+.claude/
