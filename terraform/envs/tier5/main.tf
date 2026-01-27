@@ -199,10 +199,13 @@ resource "aws_cognito_user_pool" "main" {
     temporary_password_validity_days = 7
   }
 
-  mfa_configuration = "OPTIONAL"  # Users can choose TOTP
+  mfa_configuration = "OFF"  # Using custom challenge instead
 
-  software_token_mfa_configuration {
-    enabled = true
+  # Lambda triggers for custom authentication flow
+  lambda_config {
+    define_auth_challenge          = aws_lambda_function.define_auth_challenge.arn
+    create_auth_challenge          = aws_lambda_function.create_auth_challenge.arn
+    verify_auth_challenge_response = aws_lambda_function.verify_auth_challenge.arn
   }
 
   # SMS MFA Configuration - Commented out due to iam:PassRole permissions
@@ -266,6 +269,13 @@ resource "random_string" "domain_suffix" {
 resource "aws_cognito_user_pool_client" "main" {
   name         = "${var.project_name}-app-client"
   user_pool_id = aws_cognito_user_pool.main.id
+
+  # Enable custom authentication flow
+  explicit_auth_flows = [
+    "ALLOW_CUSTOM_AUTH",
+    "ALLOW_USER_SRP_AUTH",
+    "ALLOW_REFRESH_TOKEN_AUTH"
+  ]
 
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code"]

@@ -9,3 +9,9 @@ variable "project_name" {
   type        = string
   default     = "employee-portal"
 }
+
+variable "environment" {
+  description = "Environment name"
+  type        = string
+  default     = "tier5"
+}
