@@ -64,276 +64,146 @@
   },
   "suites": [
     {
-      "title": "logout-login-e2e.spec.js",
-      "file": "logout-login-e2e.spec.js",
+      "title": "mfa-cognito-flow.spec.js",
+      "file": "mfa-cognito-flow.spec.js",
       "column": 0,
       "line": 0,
       "specs": [],
       "suites": [
         {
-          "title": "Logout and Login - End to End",
-          "file": "logout-login-e2e.spec.js",
-          "line": 18,
+          "title": "MFA Flow - Cognito Integration",
+          "file": "mfa-cognito-flow.spec.js",
+          "line": 3,
           "column": 6,
           "specs": [
             {
-              "title": "CRITICAL FLOW: Complete logout → logged-out page → login",
-              "ok": false,
+              "title": "MFA setup page should exist and provide Cognito link",
+              "ok": true,
               "tags": [],
               "tests": [
                 {
                   "timeout": 60000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
+                  "annotations": [
+                    {
+                      "type": "skip",
+                      "location": {
+                        "file": "/home/ubuntu/cognito_alb_ec2/tests/playwright/tests/mfa-cognito-flow.spec.js",
+                        "line": 17,
+                        "column": 12
+                      }
+                    }
+                  ],
+                  "expectedStatus": "skipped",
                   "projectId": "chromium",
                   "projectName": "chromium",
                   "results": [
                     {
                       "workerIndex": 0,
                       "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 4990,
-                      "error": {
-                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32mfalse\u001b[39m\nReceived: \u001b[31mtrue\u001b[39m",
-                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32mfalse\u001b[39m\nReceived: \u001b[31mtrue\u001b[39m\n    at /home/ubuntu/cognito_alb_ec2/tests/playwright/tests/logout-login-e2e.spec.js:76:32",
-                        "location": {
-                          "file": "/home/ubuntu/cognito_alb_ec2/tests/playwright/tests/logout-login-e2e.spec.js",
-                          "column": 32,
-                          "line": 76
-                        },
-                        "snippet": "  74 |\n  75 |       // This is a critical bug - fail the test\n> 76 |       expect(hasInternalError).toBe(false);\n     |                                ^\n  77 |       return;\n  78 |     }\n  79 |"
-                      },
-                      "errors": [
-                        {
-                          "location": {
-                            "file": "/home/ubuntu/cognito_alb_ec2/tests/playwright/tests/logout-login-e2e.spec.js",
-                            "column": 32,
-                            "line": 76
-                          },
-                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32mfalse\u001b[39m\nReceived: \u001b[31mtrue\u001b[39m\n\n  74 |\n  75 |       // This is a critical bug - fail the test\n> 76 |       expect(hasInternalError).toBe(false);\n     |                                ^\n  77 |       return;\n  78 |     }\n  79 |\n    at /home/ubuntu/cognito_alb_ec2/tests/playwright/tests/logout-login-e2e.spec.js:76:32"
-                        }
-                      ],
+                      "status": "skipped",
+                      "duration": 837,
+                      "errors": [],
                       "stdout": [
                         {
-                          "text": "\n🚪 COMPLETE LOGOUT AND LOGIN FLOW TEST\n\n"
+                          "text": "\nTEST: MFA Setup Page Structure\n\n"
                         },
                         {
-                          "text": "═══════════════════════════════════════════════════\n\n"
+                          "text": "  Current URL: https://employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com/login?client_id=7qa8jhkle0n5hfqq2pa3ld30b&redirect_uri=https%3A%2F%2Fportal.capsule-playground.com%2Foauth2%2Fidpresponse&response_type=code&scope=openid&state=GsTF6Dy9JDqhI1iqLQTbIN0KTysiddzukM7boRHHqMzRRLvBpT7ifovBKCXeJ%2Bq5jmVHh2oNfj%2F93VfRlTKWAeqXLz%2FELPBuS5eyZiR5w8w3upKg6QOmODI7BJImx5Vfg0R4UmP5kuA80AeRkXMo%2BExmfs%2B3efCeNtFgJENVA1%2FrXwQvFUzxJJY9vC9un7BuPqyaojImx8KHyBwyx09t89kcwN6A90%2BWLA19zWgEw5HJjXU%2BSU8ePZi51Hk%2BlUZ7pa8%3D\n"
                         },
                         {
-                          "text": "📍 PHASE 1: LOGOUT ENDPOINT\n"
+                          "text": "  Redirected to login (requires authentication)\n"
                         },
                         {
-                          "text": "─────────────────────────────────────────────────\n\n"
-                        },
-                        {
-                          "text": "Step 1.1: Navigate to /logout\n"
-                        },
-                        {
-                          "text": "  → Current URL: https://employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com/login?client_id=7qa8jhkle0n5hfqq2pa3ld30b&redirect_uri=https%3A%2F%2Fportal.capsule-playground.com%2Foauth2%2Fidpresponse&response_type=code&scope=openid&state=O%2FHroA5qAupCVTPWKbpuJiF%2F7c54fUxL59GcWBXaadkKSx7dNK4TlTxiwq9l%2BoWe46FrsUDMpC434nLKqkMGpIDZRFkj3eqSRQUOuQG5dJw%2Br9yIOuYRweR4pYOtLQGnY8rNNaD%2BSjRsq%2F0ZA0WOn8GiOc9pYc1EEkMFm5aDAA%2BNyrSDkIC8vt1DgVOkwQebGoLgPGFmkE02w69dN%2BK77RNVsOhUdwCYEDTULu%2Fli3PLIvmG0rQV8RbTYJCgY9c%3D\n"
-                        },
-                        {
-                          "text": "\n📍 PHASE 2: LOGGED-OUT CONFIRMATION PAGE\n"
-                        },
-                        {
-                          "text": "─────────────────────────────────────────────────\n\n"
-                        },
-                        {
-                          "text": "Step 2.1: Navigate to /logged-out directly\n"
-                        },
-                        {
-                          "text": "  → Current URL: https://portal.capsule-playground.com/logged-out\n"
-                        },
-                        {
-                          "text": "  ❌ CRITICAL BUG: Internal Server Error on /logged-out\n"
-                        },
-                        {
-                          "text": "  → This prevents users from logging out properly\n"
+                          "text": "  Page correctly requires authentication\n\n"
                         }
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-01-27T01:09:07.075Z",
-                      "annotations": [],
-                      "attachments": [
+                      "startTime": "2026-01-27T03:18:39.182Z",
+                      "annotations": [
                         {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/home/ubuntu/cognito_alb_ec2/tests/playwright/test-results/logout-login-e2e-Logout-an-b1372-t-→-logged-out-page-→-login-chromium/test-failed-1.png"
-                        },
-                        {
-                          "name": "video",
-                          "contentType": "video/webm",
-                          "path": "/home/ubuntu/cognito_alb_ec2/tests/playwright/test-results/logout-login-e2e-Logout-an-b1372-t-→-logged-out-page-→-login-chromium/video.webm"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/ubuntu/cognito_alb_ec2/tests/playwright/test-results/logout-login-e2e-Logout-an-b1372-t-→-logged-out-page-→-login-chromium/error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/ubuntu/cognito_alb_ec2/tests/playwright/tests/logout-login-e2e.spec.js",
-                        "column": 32,
-                        "line": 76
-                      }
-                    }
-                  ],
-                  "status": "unexpected"
-                }
-              ],
-              "id": "546ac861a0f131106483-fb6ac5e439a8c0cedfce",
-              "file": "logout-login-e2e.spec.js",
-              "line": 20,
-              "column": 3
-            },
-            {
-              "title": "CRITICAL: /logged-out page must not return Internal Server Error",
-              "ok": false,
-              "tags": [],
-              "tests": [
-                {
-                  "timeout": 60000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
-                  "projectId": "chromium",
-                  "projectName": "chromium",
-                  "results": [
-                    {
-                      "workerIndex": 1,
-                      "parallelIndex": 0,
-                      "status": "failed",
-                      "duration": 761,
-                      "error": {
-                        "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32mfalse\u001b[39m\nReceived: \u001b[31mtrue\u001b[39m",
-                        "stack": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32mfalse\u001b[39m\nReceived: \u001b[31mtrue\u001b[39m\n    at /home/ubuntu/cognito_alb_ec2/tests/playwright/tests/logout-login-e2e.spec.js:254:22",
-                        "location": {
-                          "file": "/home/ubuntu/cognito_alb_ec2/tests/playwright/tests/logout-login-e2e.spec.js",
-                          "column": 22,
-                          "line": 254
-                        },
-                        "snippet": "  252 |\n  253 |     // This MUST pass - it's a critical bug if it doesn't\n> 254 |     expect(hasError).toBe(false);\n      |                      ^\n  255 |   });\n  256 |\n  257 |   test('VERIFY: /logout redirects correctly', async ({ page }) => {"
-                      },
-                      "errors": [
-                        {
+                          "type": "skip",
                           "location": {
-                            "file": "/home/ubuntu/cognito_alb_ec2/tests/playwright/tests/logout-login-e2e.spec.js",
-                            "column": 22,
-                            "line": 254
-                          },
-                          "message": "Error: \u001b[2mexpect(\u001b[22m\u001b[31mreceived\u001b[39m\u001b[2m).\u001b[22mtoBe\u001b[2m(\u001b[22m\u001b[32mexpected\u001b[39m\u001b[2m) // Object.is equality\u001b[22m\n\nExpected: \u001b[32mfalse\u001b[39m\nReceived: \u001b[31mtrue\u001b[39m\n\n  252 |\n  253 |     // This MUST pass - it's a critical bug if it doesn't\n> 254 |     expect(hasError).toBe(false);\n      |                      ^\n  255 |   });\n  256 |\n  257 |   test('VERIFY: /logout redirects correctly', async ({ page }) => {\n    at /home/ubuntu/cognito_alb_ec2/tests/playwright/tests/logout-login-e2e.spec.js:254:22"
+                            "file": "/home/ubuntu/cognito_alb_ec2/tests/playwright/tests/mfa-cognito-flow.spec.js",
+                            "line": 17,
+                            "column": 12
+                          }
                         }
                       ],
-                      "stdout": [
-                        {
-                          "text": "\n🔍 CRITICAL CHECK: /logged-out Page Status\n\n"
-                        },
-                        {
-                          "text": "Navigating to /logged-out...\n"
-                        },
-                        {
-                          "text": "  → Has Internal Server Error: true\n"
-                        },
-                        {
-                          "text": "  ❌ CRITICAL BUG: /logged-out returns Internal Server Error\n"
-                        },
-                        {
-                          "text": "  → This breaks the entire logout flow\n"
-                        },
-                        {
-                          "text": "  → Users cannot logout properly\n"
-                        }
-                      ],
-                      "stderr": [],
-                      "retry": 0,
-                      "startTime": "2026-01-27T01:09:13.422Z",
-                      "annotations": [],
-                      "attachments": [
-                        {
-                          "name": "screenshot",
-                          "contentType": "image/png",
-                          "path": "/home/ubuntu/cognito_alb_ec2/tests/playwright/test-results/logout-login-e2e-Logout-an-2e63a-eturn-Internal-Server-Error-chromium/test-failed-1.png"
-                        },
-                        {
-                          "name": "video",
-                          "contentType": "video/webm",
-                          "path": "/home/ubuntu/cognito_alb_ec2/tests/playwright/test-results/logout-login-e2e-Logout-an-2e63a-eturn-Internal-Server-Error-chromium/video.webm"
-                        },
-                        {
-                          "name": "error-context",
-                          "contentType": "text/markdown",
-                          "path": "/home/ubuntu/cognito_alb_ec2/tests/playwright/test-results/logout-login-e2e-Logout-an-2e63a-eturn-Internal-Server-Error-chromium/error-context.md"
-                        }
-                      ],
-                      "errorLocation": {
-                        "file": "/home/ubuntu/cognito_alb_ec2/tests/playwright/tests/logout-login-e2e.spec.js",
-                        "column": 22,
-                        "line": 254
-                      }
+                      "attachments": []
                     }
                   ],
-                  "status": "unexpected"
+                  "status": "skipped"
                 }
               ],
-              "id": "546ac861a0f131106483-fed8ae799a22a1926c45",
-              "file": "logout-login-e2e.spec.js",
-              "line": 232,
+              "id": "ae473c4a2311eeabc840-20bf04404984ac3b7189",
+              "file": "mfa-cognito-flow.spec.js",
+              "line": 5,
               "column": 3
             },
             {
-              "title": "VERIFY: /logout redirects correctly",
+              "title": "Settings page should have MFA setup link",
               "ok": true,
               "tags": [],
               "tests": [
                 {
                   "timeout": 60000,
-                  "annotations": [],
-                  "expectedStatus": "passed",
+                  "annotations": [
+                    {
+                      "type": "skip",
+                      "location": {
+                        "file": "/home/ubuntu/cognito_alb_ec2/tests/playwright/tests/mfa-cognito-flow.spec.js",
+                        "line": 75,
+                        "column": 12
+                      }
+                    }
+                  ],
+                  "expectedStatus": "skipped",
                   "projectId": "chromium",
                   "projectName": "chromium",
                   "results": [
                     {
-                      "workerIndex": 2,
+                      "workerIndex": 0,
                       "parallelIndex": 0,
-                      "status": "passed",
-                      "duration": 2937,
+                      "status": "skipped",
+                      "duration": 771,
                       "errors": [],
                       "stdout": [
                         {
-                          "text": "\n🔗 VERIFY: /logout Redirect Behavior\n\n"
+                          "text": "\nTEST: Settings Page MFA Link\n\n"
                         },
                         {
-                          "text": "Step 1: Navigate to /logout\n"
+                          "text": "  Current URL: https://employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com/login?client_id=7qa8jhkle0n5hfqq2pa3ld30b&redirect_uri=https%3A%2F%2Fportal.capsule-playground.com%2Foauth2%2Fidpresponse&response_type=code&scope=openid&state=0bUvL1M0DukqxruOdzwGl2%2BClZLEAMUXIwXUycVBfMgQBjs8pjfVWqf2hW5QCoe5imL9HXNCnPLn7fGiaBrOiVUjmbRkN0ZIlKFlPAbrPU%2F6kPD61DrpMD8kqZJQdF%2FnxPtg6JZphjMvoY1V5DkB%2Fh4RiK1rytj1G2tbea0QzeXpY%2BZWPDt%2BMHRJ%2FB1GUmmRJT21ZnSqxrdbLrqFw5lTPloRd%2BE2kHnt9Rpv5SVIxmvC6YS5UBq0JdIwgpA9C1W%2FsA%3D%3D\n"
                         },
                         {
-                          "text": "  → Final URL: https://employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com/login?client_id=7qa8jhkle0n5hfqq2pa3ld30b&redirect_uri=https%3A%2F%2Fportal.capsule-playground.com%2Foauth2%2Fidpresponse&response_type=code&scope=openid&state=AK9QZuGrTaj%2F6Ke%2B0VY0P3%2BhQWmoUYogwzKa6gOzQ24aqeHHtgmNg8NslWUhS%2F0VNKNFrTNn3APixWqIET64xciST0dCU%2BNPNMH9%2FZAvlo07bLXzUT8jgATGxZm6iHKXxY0UK%2B9utXuxj8uTUARSmaH0TbWZbo01JlZENavE5fWQ8kdBfAuFOZ36uQ6%2BZpZ5SPJZtbIDta%2BDEBy5hL3uiX6HqITcmsBD4k01ZrjGVCMoBBJxP%2BxAJ2S3kOS7EGs%3D\n"
+                          "text": "  Redirected to login (requires authentication)\n"
                         },
                         {
-                          "text": "  ⚠️  Unexpected redirect destination\n"
-                        },
-                        {
-                          "text": "  → Expected: Cognito logout or /logged-out\n"
-                        },
-                        {
-                          "text": "  → Got: https://employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com/login?client_id=7qa8jhkle0n5hfqq2pa3ld30b&redirect_uri=https%3A%2F%2Fportal.capsule-playground.com%2Foauth2%2Fidpresponse&response_type=code&scope=openid&state=AK9QZuGrTaj%2F6Ke%2B0VY0P3%2BhQWmoUYogwzKa6gOzQ24aqeHHtgmNg8NslWUhS%2F0VNKNFrTNn3APixWqIET64xciST0dCU%2BNPNMH9%2FZAvlo07bLXzUT8jgATGxZm6iHKXxY0UK%2B9utXuxj8uTUARSmaH0TbWZbo01JlZENavE5fWQ8kdBfAuFOZ36uQ6%2BZpZ5SPJZtbIDta%2BDEBy5hL3uiX6HqITcmsBD4k01ZrjGVCMoBBJxP%2BxAJ2S3kOS7EGs%3D\n"
-                        },
-                        {
-                          "text": "\n✅ Logout redirect verification complete\n"
+                          "text": "  Settings correctly requires authentication\n\n"
                         }
                       ],
                       "stderr": [],
                       "retry": 0,
-                      "startTime": "2026-01-27T01:09:15.497Z",
-                      "annotations": [],
+                      "startTime": "2026-01-27T03:18:40.116Z",
+                      "annotations": [
+                        {
+                          "type": "skip",
+                          "location": {
+                            "file": "/home/ubuntu/cognito_alb_ec2/tests/playwright/tests/mfa-cognito-flow.spec.js",
+                            "line": 75,
+                            "column": 12
+                          }
+                        }
+                      ],
                       "attachments": []
                     }
                   ],
-                  "status": "expected"
+                  "status": "skipped"
                 }
               ],
-              "id": "546ac861a0f131106483-77009a91a9d73fe8b84a",
-              "file": "logout-login-e2e.spec.js",
-              "line": 257,
+              "id": "ae473c4a2311eeabc840-fcd765aa6696f15e9799",
+              "file": "mfa-cognito-flow.spec.js",
+              "line": 63,
               "column": 3
             }
           ]
@@ -343,11 +213,11 @@
   ],
   "errors": [],
   "stats": {
-    "startTime": "2026-01-27T01:09:05.706Z",
-    "duration": 12863.187,
-    "expected": 1,
-    "skipped": 0,
-    "unexpected": 2,
+    "startTime": "2026-01-27T03:18:37.909Z",
+    "duration": 3052.5969999999998,
+    "expected": 0,
+    "skipped": 2,
+    "unexpected": 0,
     "flaky": 0
   }
 }

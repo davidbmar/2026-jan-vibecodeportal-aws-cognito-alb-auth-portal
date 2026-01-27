@@ -1,0 +1,46 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - banner [ref=e3]:
+    - text: "[ CONNECTED ]"
+    - heading // CAPSULE ACCESS MAINFRAME // [level=1] [ref=e4]
+  - navigation [ref=e5]:
+    - link "> Home" [ref=e6] [cursor=pointer]:
+      - /url: /
+    - link "> Directory" [ref=e7] [cursor=pointer]:
+      - /url: /directory
+    - link "> Engineering" [ref=e8] [cursor=pointer]:
+      - /url: /areas/engineering
+    - link "> HR" [ref=e9] [cursor=pointer]:
+      - /url: /areas/hr
+    - link "> Automation" [ref=e10] [cursor=pointer]:
+      - /url: /areas/automation
+    - link "> Product" [ref=e11] [cursor=pointer]:
+      - /url: /areas/product
+    - link "> Logout" [ref=e12] [cursor=pointer]:
+      - /url: /logout
+  - generic [ref=e14]:
+    - generic [ref=e15]: ██████╗ ███████╗███████╗███████╗████████╗ ██╔══██╗██╔════╝██╔════╝██╔════╝╚══██╔══╝ ██████╔╝█████╗ ███████╗█████╗ ██║ ██╔══██╗██╔══╝ ╚════██║██╔══╝ ██║ ██║ ██║███████╗███████║███████╗ ██║ ╚═╝ ╚═╝╚══════╝╚══════╝╚══════╝ ╚═╝ ██████╗ █████╗ ███████╗███████╗██╗ ██╗ ██████╗ ██████╗ ██████╗ ██╔══██╗██╔══██╗██╔════╝██╔════╝██║ ██║██╔═══██╗██╔══██╗██╔══██╗ ██████╔╝███████║███████╗███████╗██║ █╗ ██║██║ ██║██████╔╝██║ ██║ ██╔═══╝ ██╔══██║╚════██║╚════██║██║███╗██║██║ ██║██╔══██╗██║ ██║ ██║ ██║ ██║███████║███████║╚███╔███╔╝╚██████╔╝██║ ██║██████╔╝ ╚═╝ ╚═╝ ╚═╝╚══════╝╚══════╝ ╚══╝╚══╝ ╚═════╝ ╚═╝ ╚═╝╚═════╝
+    - generic [ref=e16]:
+      - heading "🔑 RESET YOUR PASSWORD" [level=2] [ref=e17]
+      - paragraph [ref=e18]: Follow the steps below to reset your password securely.
+      - generic [ref=e19]:
+        - generic [ref=e20]:
+          - generic [ref=e21]: STEP 1
+          - heading "ENTER YOUR EMAIL" [level=3] [ref=e22]
+        - generic [ref=e23]:
+          - paragraph [ref=e24]: Enter the email address associated with your account.
+          - generic [ref=e25]:
+            - strong [ref=e26]: "Error:"
+            - text: Network error. Please try again.
+          - generic [ref=e27]:
+            - generic [ref=e28]: "Email Address:"
+            - textbox "Email Address:" [ref=e29]:
+              - /placeholder: user@example.com
+              - text: dmar@capsule.com
+          - button "SEND RESET CODE" [ref=e30] [cursor=pointer]
+      - link "← RETURN TO LOGIN" [ref=e32] [cursor=pointer]:
+        - /url: /logout
+  - contentinfo [ref=e33]: CAPSULE_PORTAL_v1.0 // COGNITO_AUTH // ALB_GATEWAY // ESTABLISHED_2026
+```

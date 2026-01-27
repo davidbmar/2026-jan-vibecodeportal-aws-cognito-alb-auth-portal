@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}MFA SETUP - CAPSULE PORTAL{% endblock %}
+
+{% block content %}
+<div class="crt-container">
+    <pre class="ascii-art">
+  __  __ _____ _
+ |  \/  |  ___/ \
+ | |\/| | |_ / _ \
+ | |  | |  _/ ___ \
+ |_|  |_|_|/_/   \_\
+
+ MULTI-FACTOR AUTH
+    </pre>
+
+    <div class="content-box">
+        <h2>🔐 ENABLE MFA FOR {{ email }}</h2>
+
+        <div class="info-section">
+            <h3>WHAT IS MFA?</h3>
+            <p>Multi-Factor Authentication adds an extra layer of security to your account by requiring a time-based code from your authenticator app in addition to your password.</p>
+        </div>
+
+        <div class="info-section">
+            <h3>HOW TO ENABLE MFA:</h3>
+            <p>MFA is managed through your AWS Cognito account settings.</p>
+            <ol>
+                <li>Click the button below to go to MFA settings</li>
+                <li>Follow Cognito's instructions to set up MFA</li>
+                <li>Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)</li>
+                <li>Enter the verification code to confirm</li>
+                <li>MFA will be required on your next login</li>
+            </ol>
+        </div>
+
+        <div class="warning-box" style="background: #1a1a1a; border: 2px solid #00ff00; padding: 20px; margin: 20px 0;">
+            <p>⚠️ <strong>IMPORTANT:</strong></p>
+            <p>• Make sure you have an authenticator app installed on your phone</p>
+            <p>• Save your backup codes in a secure location</p>
+            <p>• You'll need your MFA code every time you log in</p>
+        </div>
+
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="{{ cognito_mfa_url }}" class="btn-primary" style="display: inline-block; padding: 20px 40px; background: #00ff00; color: #000; text-decoration: none; border-radius: 5px; font-weight: bold; font-size: 1.2em;">
+                → GO TO MFA SETTINGS
+            </a>
+        </div>
+
+        <div class="nav-links">
+            <a href="/settings">← BACK TO SETTINGS</a>
+        </div>
+    </div>
+</div>
+
+<style>
+    .btn-primary {
+        transition: all 0.3s;
+    }
+
+    .btn-primary:hover {
+        background: #00cc00 !important;
+        transform: scale(1.05);
+    }
+</style>
+{% endblock %}
