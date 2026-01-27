@@ -25,6 +25,9 @@ import os
 import json
 import base64
 import time
+import re
+import hmac
+import hashlib
 from typing import Optional
 from datetime import datetime, timedelta
 import boto3
@@ -39,9 +42,21 @@ templates = Jinja2Templates(directory="/opt/employee-portal/templates")
 # Configuration
 USER_POOL_ID = "${user_pool_id}"
 AWS_REGION = "${aws_region}"
+CLIENT_ID = "${client_id}"
+CLIENT_SECRET = "${client_secret}"
 
 # Cognito client
 cognito_client = boto3.client('cognito-idp', region_name=AWS_REGION)
+
+def get_secret_hash(username: str) -> str:
+    """Calculate SECRET_HASH for Cognito client with secret."""
+    message = bytes(username + CLIENT_ID, 'utf-8')
+    secret = bytes(CLIENT_SECRET, 'utf-8')
+    dig = hmac.new(secret, message, hashlib.sha256).digest()
+    return base64.b64encode(dig).decode()
+
+# EC2 client
+ec2_client = boto3.client('ec2', region_name=AWS_REGION)
 
 # In-memory cache for group memberships
 group_cache = {}
@@ -130,6 +145,84 @@ def require_group(request: Request, required_group: str) -> tuple:
 
     return email, groups
 
+# EC2 Management Functions
+def get_instances_by_tag(tag_key: str = "VibeCodeArea", tag_value: Optional[str] = None) -> list:
+    """Query EC2 instances with specified tag. If tag_value is None, returns all instances with the tag."""
+    try:
+        filters = [{'Name': f'tag:{tag_key}', 'Values': ['*']}]
+        if tag_value:
+            filters = [{'Name': f'tag:{tag_key}', 'Values': [tag_value]}]
+
+        response = ec2_client.describe_instances(Filters=filters)
+
+        instances = []
+        for reservation in response['Reservations']:
+            for instance in reservation['Instances']:
+                # Extract instance details
+                instance_data = {
+                    'instance_id': instance['InstanceId'],
+                    'instance_type': instance['InstanceType'],
+                    'state': instance['State']['Name'],
+                    'private_ip': instance.get('PrivateIpAddress', 'N/A'),
+                    'public_ip': instance.get('PublicIpAddress', 'N/A'),
+                    'name': 'N/A',
+                    'area': 'N/A'
+                }
+
+                # Extract Name and VibeCodeArea tags
+                for tag in instance.get('Tags', []):
+                    if tag['Key'] == 'Name':
+                        instance_data['name'] = tag['Value']
+                    elif tag['Key'] == tag_key:
+                        instance_data['area'] = tag['Value']
+
+                instances.append(instance_data)
+
+        return instances
+    except Exception as e:
+        print(f"Error fetching EC2 instances: {e}")
+        return []
+
+def get_instance_by_area(area: str) -> Optional[dict]:
+    """Get the EC2 instance mapped to a specific area."""
+    instances = get_instances_by_tag(tag_value=area)
+    if instances and len(instances) > 0:
+        return instances[0]  # Return first matching instance
+    return None
+
+def validate_instance_exists(instance_id: str) -> bool:
+    """Check if an EC2 instance exists and is accessible."""
+    try:
+        response = ec2_client.describe_instances(InstanceIds=[instance_id])
+        return len(response['Reservations']) > 0
+    except Exception as e:
+        print(f"Error validating instance {instance_id}: {e}")
+        return False
+
+def tag_instance(instance_id: str, area: str) -> tuple:
+    """Apply VibeCodeArea tag to an EC2 instance. Returns (success: bool, message: str)."""
+    # Validate area value
+    valid_areas = ['engineering', 'hr', 'automation', 'product']
+    if area not in valid_areas:
+        return False, f"Invalid area. Must be one of: {', '.join(valid_areas)}"
+
+    # Validate instance exists
+    if not validate_instance_exists(instance_id):
+        return False, f"Instance {instance_id} not found or not accessible"
+
+    try:
+        ec2_client.create_tags(
+            Resources=[instance_id],
+            Tags=[{'Key': 'VibeCodeArea', 'Value': area}]
+        )
+        return True, f"Successfully tagged {instance_id} with area={area}"
+    except Exception as e:
+        return False, f"Error tagging instance: {str(e)}"
+
+def build_ssm_url(instance_id: str) -> str:
+    """Generate AWS Systems Manager Session Manager URL for an instance."""
+    return f"https://console.aws.amazon.com/systems-manager/session-manager/{instance_id}?region={AWS_REGION}"
+
 @app.get("/health")
 async def health():
     """Health check endpoint (no auth required)."""
@@ -138,8 +231,18 @@ async def health():
 @app.get("/logout")
 async def logout():
     """Logout endpoint that redirects to Cognito logout."""
-    logout_url = "https://employee-portal-gdg66a7d.auth.us-east-1.amazoncognito.com/logout?client_id=2hheaklvmfkpsm547p2nuab3r7&logout_uri=https://portal.capsule-playground.com/logged-out"
+    logout_url = "https://employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com/logout?client_id=7qa8jhkle0n5hfqq2pa3ld30b&logout_uri=https://portal.capsule-playground.com/logged-out"
     return RedirectResponse(url=logout_url, status_code=302)
+
+@app.get("/logout-and-reset")
+async def logout_and_reset():
+    """Redirect to password reset page.
+
+    Note: We don't explicitly logout here because the password reset flow
+    already provides security via email verification. Going through Cognito
+    logout can cause OAuth redirect_uri errors.
+    """
+    return RedirectResponse(url="/password-reset", status_code=302)
 
 @app.get("/logged-out", response_class=HTMLResponse)
 async def logged_out(request: Request):
@@ -147,18 +250,49 @@ async def logged_out(request: Request):
     response = templates.TemplateResponse("logged_out.html", {
         "request": request
     })
-    # Clear all ALB authentication cookies with various attempts
+
+    # Clear all ALB authentication cookies aggressively
     cookie_names = [
         "AWSELBAuthSessionCookie",
         "AWSELBAuthSessionCookie-0",
         "AWSELBAuthSessionCookie-1",
         "AWSELBAuthSessionCookie-2"
     ]
+
     for cookie_name in cookie_names:
-        # Delete with various domain combinations
-        response.delete_cookie(cookie_name, path="/", domain="portal.capsule-playground.com")
-        response.delete_cookie(cookie_name, path="/", domain=".capsule-playground.com")
-        response.delete_cookie(cookie_name, path="/")
+        # Delete with various domain combinations and all security attributes
+        # Domain variations
+        for domain in ["portal.capsule-playground.com", ".capsule-playground.com", ".portal.capsule-playground.com", None]:
+            # Try with and without domain
+            if domain:
+                response.set_cookie(
+                    key=cookie_name,
+                    value="",
+                    max_age=0,
+                    expires=0,
+                    path="/",
+                    domain=domain,
+                    secure=True,
+                    httponly=True,
+                    samesite="lax"
+                )
+            else:
+                response.set_cookie(
+                    key=cookie_name,
+                    value="",
+                    max_age=0,
+                    expires=0,
+                    path="/",
+                    secure=True,
+                    httponly=True,
+                    samesite="lax"
+                )
+
+    # Prevent caching
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
     return response
 
 @app.get("/", response_class=HTMLResponse)
@@ -200,12 +334,28 @@ async def directory(request: Request):
 
 @app.get("/areas/engineering", response_class=HTMLResponse)
 async def area_engineering(request: Request):
-    """Engineering area page."""
+    """Engineering area page - redirects to SSM if instance is mapped."""
     email, groups = require_group(request, "engineering")
 
     if not email:
         return RedirectResponse(url="/denied")
 
+    # Check for mapped EC2 instance
+    instance = get_instance_by_area("engineering")
+    if instance and instance['state'] == 'running':
+        ssm_url = build_ssm_url(instance['instance_id'])
+        return RedirectResponse(url=ssm_url, status_code=302)
+    elif instance and instance['state'] != 'running':
+        # Instance exists but not running
+        return templates.TemplateResponse("area.html", {
+            "request": request,
+            "email": email,
+            "groups": groups,
+            "area_name": "Engineering",
+            "area_description": f"EC2 instance is {instance['state']}. Please start it first or contact your administrator."
+        })
+
+    # No mapped instance - show static page
     return templates.TemplateResponse("area.html", {
         "request": request,
         "email": email,
@@ -216,12 +366,28 @@ async def area_engineering(request: Request):
 
 @app.get("/areas/hr", response_class=HTMLResponse)
 async def area_hr(request: Request):
-    """HR area page."""
+    """HR area page - redirects to SSM if instance is mapped."""
     email, groups = require_group(request, "hr")
 
     if not email:
         return RedirectResponse(url="/denied")
 
+    # Check for mapped EC2 instance
+    instance = get_instance_by_area("hr")
+    if instance and instance['state'] == 'running':
+        ssm_url = build_ssm_url(instance['instance_id'])
+        return RedirectResponse(url=ssm_url, status_code=302)
+    elif instance and instance['state'] != 'running':
+        # Instance exists but not running
+        return templates.TemplateResponse("area.html", {
+            "request": request,
+            "email": email,
+            "groups": groups,
+            "area_name": "Human Resources",
+            "area_description": f"EC2 instance is {instance['state']}. Please start it first or contact your administrator."
+        })
+
+    # No mapped instance - show static page
     return templates.TemplateResponse("area.html", {
         "request": request,
         "email": email,
@@ -248,12 +414,28 @@ async def area_automation(request: Request):
 
 @app.get("/areas/product", response_class=HTMLResponse)
 async def area_product(request: Request):
-    """Product area page."""
+    """Product area page - redirects to SSM if instance is mapped."""
     email, groups = require_group(request, "product")
 
     if not email:
         return RedirectResponse(url="/denied")
 
+    # Check for mapped EC2 instance
+    instance = get_instance_by_area("product")
+    if instance and instance['state'] == 'running':
+        ssm_url = build_ssm_url(instance['instance_id'])
+        return RedirectResponse(url=ssm_url, status_code=302)
+    elif instance and instance['state'] != 'running':
+        # Instance exists but not running
+        return templates.TemplateResponse("area.html", {
+            "request": request,
+            "email": email,
+            "groups": groups,
+            "area_name": "Product",
+            "area_description": f"EC2 instance is {instance['state']}. Please start it first or contact your administrator."
+        })
+
+    # No mapped instance - show static page
     return templates.TemplateResponse("area.html", {
         "request": request,
         "email": email,
@@ -490,6 +672,230 @@ async def delete_user(request: Request):
         import time as time_module
         timestamp = int(time_module.time())
         return RedirectResponse(url=f"/admin?error={str(e)}&t={timestamp}", status_code=303)
+
+# EC2 Resources Management Routes
+@app.get("/ec2-resources", response_class=HTMLResponse)
+async def ec2_resources_page(request: Request):
+    """EC2 Resources management page (admin only)."""
+    email, groups = require_auth(request)
+
+    # Check if user is admin
+    if 'admins' not in groups:
+        return RedirectResponse(url="/denied", status_code=303)
+
+    return templates.TemplateResponse("ec2_resources.html", {
+        "request": request,
+        "email": email,
+        "groups": groups
+    })
+
+@app.get("/api/ec2/instances")
+async def get_ec2_instances_api(request: Request):
+    """API endpoint to get EC2 instances with VibeCodeArea tag (admin only)."""
+    email, groups = require_auth(request)
+
+    # Check if user is admin
+    if 'admins' not in groups:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    instances = get_instances_by_tag()
+    return {"instances": instances}
+
+@app.post("/api/ec2/tag-instance")
+async def tag_ec2_instance_api(request: Request):
+    """API endpoint to tag an EC2 instance with area (admin only)."""
+    email, groups = require_auth(request)
+
+    # Check if user is admin
+    if 'admins' not in groups:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        data = await request.json()
+        instance_id = data.get("instance_id")
+        area = data.get("area")
+
+        if not instance_id or not area:
+            return {"success": False, "message": "Missing instance_id or area"}
+
+        success, message = tag_instance(instance_id, area)
+        return {"success": success, "message": message}
+    except Exception as e:
+        return {"success": False, "message": f"Error: {str(e)}"}
+
+# ============================================================================
+# PASSWORD RESET CUSTOM FLOW
+# ============================================================================
+
+@app.get("/password-reset", response_class=HTMLResponse)
+async def password_reset_page(request: Request):
+    """Custom password reset flow page (no auth required)."""
+    return templates.TemplateResponse("password_reset.html", {
+        "request": request
+    })
+
+@app.get("/password-reset-success", response_class=HTMLResponse)
+async def password_reset_success_page(request: Request):
+    """Password reset success page."""
+    return templates.TemplateResponse("password_reset_success.html", {
+        "request": request
+    })
+
+@app.post("/api/password-reset/send-code")
+async def send_reset_code_api(request: Request):
+    """API: Send password reset code to user's email."""
+    try:
+        data = await request.json()
+        email = data.get("email", "").strip().lower()
+
+        if not email:
+            return {"success": False, "error": "invalid_email", "message": "Email is required"}
+
+        # Call Cognito to send reset code
+        response = cognito_client.forgot_password(
+            ClientId=CLIENT_ID,
+            Username=email,
+            SecretHash=get_secret_hash(email)
+        )
+
+        # Get delivery destination (masked email)
+        destination = response.get('CodeDeliveryDetails', {}).get('Destination', 'your email')
+
+        return {
+            "success": True,
+            "destination": destination
+        }
+
+    except cognito_client.exceptions.UserNotFoundException:
+        # Don't reveal if user exists - return success anyway for security
+        return {
+            "success": True,
+            "destination": "u***@example.com"
+        }
+    except cognito_client.exceptions.InvalidParameterException as e:
+        return {
+            "success": False,
+            "error": "invalid_email",
+            "message": "Invalid email format"
+        }
+    except cognito_client.exceptions.LimitExceededException:
+        return {
+            "success": False,
+            "error": "rate_limit",
+            "message": "Too many requests. Please try again later."
+        }
+    except Exception as e:
+        import traceback
+        print(f"Error sending reset code: {e}")
+        print(traceback.format_exc())
+        return {
+            "success": False,
+            "error": "unknown",
+            "message": f"An error occurred: {str(e)}"
+        }
+
+@app.post("/api/password-reset/verify-code")
+async def verify_reset_code_api(request: Request):
+    """API: Verify the reset code format (actual verification happens on confirm)."""
+    try:
+        data = await request.json()
+        code = data.get("code", "").strip()
+
+        if not code:
+            return {"success": False, "error": "invalid_code", "message": "Code is required"}
+
+        # Basic validation - 6 digits
+        if not code.isdigit() or len(code) != 6:
+            return {"success": False, "error": "invalid_format", "message": "Code must be 6 digits"}
+
+        # Don't verify with Cognito yet - that happens on confirm
+        # This just validates format
+        return {"success": True}
+
+    except Exception as e:
+        print(f"Error verifying code: {e}")
+        return {
+            "success": False,
+            "error": "unknown",
+            "message": "An error occurred"
+        }
+
+@app.post("/api/password-reset/confirm")
+async def confirm_password_reset_api(request: Request):
+    """API: Confirm password reset with code and new password."""
+    try:
+        data = await request.json()
+        email = data.get("email", "").strip().lower()
+        code = data.get("code", "").strip()
+        password = data.get("password", "")
+
+        if not email or not code or not password:
+            return {
+                "success": False,
+                "error": "missing_fields",
+                "message": "All fields are required"
+            }
+
+        # Validate password requirements
+        if len(password) < 8:
+            return {"success": False, "error": "weak_password", "message": "Password must be at least 8 characters"}
+        if not re.search(r'[A-Z]', password):
+            return {"success": False, "error": "weak_password", "message": "Password must contain an uppercase letter"}
+        if not re.search(r'[a-z]', password):
+            return {"success": False, "error": "weak_password", "message": "Password must contain a lowercase letter"}
+        if not re.search(r'[0-9]', password):
+            return {"success": False, "error": "weak_password", "message": "Password must contain a number"}
+        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', password):
+            return {"success": False, "error": "weak_password", "message": "Password must contain a special character"}
+
+        # Confirm password reset with Cognito
+        cognito_client.confirm_forgot_password(
+            ClientId=CLIENT_ID,
+            Username=email,
+            ConfirmationCode=code,
+            Password=password,
+            SecretHash=get_secret_hash(email)
+        )
+
+        return {"success": True}
+
+    except cognito_client.exceptions.ExpiredCodeException:
+        return {
+            "success": False,
+            "error": "expired",
+            "message": "Your code has expired. Please request a new code."
+        }
+    except cognito_client.exceptions.CodeMismatchException:
+        return {
+            "success": False,
+            "error": "invalid_code",
+            "message": "Incorrect code. Please check your email and try again."
+        }
+    except cognito_client.exceptions.InvalidPasswordException:
+        return {
+            "success": False,
+            "error": "weak_password",
+            "message": "Password does not meet requirements"
+        }
+    except cognito_client.exceptions.LimitExceededException:
+        return {
+            "success": False,
+            "error": "rate_limit",
+            "message": "Too many attempts. Please try again later."
+        }
+    except cognito_client.exceptions.UserNotFoundException:
+        return {
+            "success": False,
+            "error": "user_not_found",
+            "message": "User not found"
+        }
+    except Exception as e:
+        print(f"Error confirming password reset: {e}")
+        return {
+            "success": False,
+            "error": "unknown",
+            "message": f"An error occurred: {str(e)}"
+        }
 
 EOFAPP
 
@@ -943,6 +1349,9 @@ cat > /opt/employee-portal/templates/base.html << 'EOFBASE'
     <nav>
         <a href="/">Home</a>
         <a href="/directory">Directory</a>
+        {% if groups and 'admins' in groups %}
+        <a href="/ec2-resources">EC2 Resources</a>
+        {% endif %}
         <a href="/areas/engineering">Engineering</a>
         <a href="/areas/hr">HR</a>
         <a href="/areas/automation">Automation</a>
@@ -1040,8 +1449,7 @@ cat > /opt/employee-portal/templates/home.html << 'EOFHOME'
 
     <h3 style="margin-top: 2rem;">Account Security</h3>
     <div style="margin-top: 1rem;">
-        <a href="/mfa-setup" class="area-link" style="background: #8b008b; border-color: #ff00ff;">🔐 Set Up MFA</a>
-        <a href="/password-reset-info" class="area-link" style="background: #006400; border-color: #00ff00;">🔑 Reset Password</a>
+        <a href="/settings" class="area-link" style="background: #006400; border-color: #00ff00;">⚙️ Account Settings</a>
     </div>
 </div>
 {% endblock %}
@@ -1210,24 +1618,51 @@ cat > /opt/employee-portal/templates/logged_out.html << 'EOFLOGGEDOUT'
         }
     </style>
     <script>
-        function clearAndReturn() {
-            // Clear all cookies
+        function clearAllSessionData() {
+            // Clear all cookies aggressively
+            const cookiesToClear = [
+                'AWSELBAuthSessionCookie',
+                'AWSELBAuthSessionCookie-0',
+                'AWSELBAuthSessionCookie-1',
+                'AWSELBAuthSessionCookie-2'
+            ];
+
+            // Clear specific auth cookies
+            cookiesToClear.forEach(function(cookieName) {
+                document.cookie = cookieName + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;";
+                document.cookie = cookieName + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=.capsule-playground.com;";
+                document.cookie = cookieName + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=portal.capsule-playground.com;";
+                document.cookie = cookieName + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=.portal.capsule-playground.com;";
+            });
+
+            // Clear all other cookies
             document.cookie.split(";").forEach(function(c) {
                 var eqPos = c.indexOf("=");
-                var name = eqPos > -1 ? c.substr(0, eqPos) : c;
-                document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;";
-                document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=.capsule-playground.com";
-                document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=portal.capsule-playground.com";
+                var name = eqPos > -1 ? c.substr(0, eqPos).trim() : c.trim();
+                if (name) {
+                    document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;";
+                    document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=.capsule-playground.com;";
+                    document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=portal.capsule-playground.com;";
+                }
             });
 
             // Clear storage
-            localStorage.clear();
-            sessionStorage.clear();
+            try { localStorage.clear(); } catch(e) {}
+            try { sessionStorage.clear(); } catch(e) {}
+        }
 
+        function clearAndReturn() {
+            clearAllSessionData();
             // Force navigation to portal (ALB will require re-authentication)
             window.location.replace("https://portal.capsule-playground.com");
             return false;
         }
+
+        // Auto-clear cookies on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            clearAllSessionData();
+            console.log('Session data cleared automatically');
+        });
     </script>
 </head>
 <body>
@@ -1670,6 +2105,915 @@ window.addEventListener('DOMContentLoaded', function() {
 </script>
 {% endblock %}
 EOFADMIN
+
+# Create EC2 Resources template
+cat > /opt/employee-portal/templates/ec2_resources.html << 'EOFEC2'
+{% extends "base.html" %}
+
+{% block title %}EC2 RESOURCES - CAPSULE PORTAL{% endblock %}
+
+{% block content %}
+<div class="crt-container">
+    <pre class="ascii-art">
+ _____ ____ ____    ____  _____ ____   ___  _   _ ____   ____ _____ ____
+| ____/ ___|___ \  |  _ \| ____/ ___| / _ \| | | |  _ \ / ___| ____/ ___|
+|  _|| |     __) | | |_) |  _| \___ \| | | | | | | |_) | |   |  _| \___ \
+| |__| |___ / __/  |  _ <| |___ ___) | |_| | |_| |  _ <| |___| |___ ___) |
+|_____\____|_____| |_| \_\_____|____/ \___/ \___/|_| \_\\____|_____|____/
+
+ EC2 INSTANCE MANAGEMENT
+    </pre>
+
+    <div class="content-box">
+        <h2>⚡ EC2 RESOURCES MANAGEMENT</h2>
+
+        <div id="status-message" style="display: none; padding: 1rem; margin-bottom: 1rem; border: 1px solid;"></div>
+
+        <p style="margin-bottom: 2rem; opacity: 0.8;">
+            Manage EC2 instances mapped to portal tabs. Instances tagged with "VibeCodeArea" will redirect users to SSM Session Manager.
+        </p>
+
+        <div style="margin-bottom: 2rem;">
+            <button onclick="showAddInstanceModal()"
+                    style="background: rgba(0, 255, 0, 0.2); border: 2px solid #00ff00; color: #00ff00; padding: 0.8rem 1.5rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-size: 0.85rem; font-weight: 700; text-transform: uppercase; margin-right: 1rem;">
+                + ADD INSTANCE
+            </button>
+            <button onclick="refreshInstances()"
+                    style="background: rgba(0, 100, 255, 0.2); border: 2px solid #00aaff; color: #00aaff; padding: 0.8rem 1.5rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-size: 0.85rem; font-weight: 700; text-transform: uppercase;">
+                ↻ REFRESH
+            </button>
+        </div>
+
+        <h3 style="color: #00ff00; margin-top: 2rem; margin-bottom: 1rem;">MANAGED INSTANCES</h3>
+
+        <div id="loading" style="text-align: center; padding: 2rem; color: #00ff00;">
+            Loading instances...
+        </div>
+
+        <table id="instances-table" style="width: 100%; margin-top: 1rem; display: none;">
+            <thead>
+                <tr>
+                    <th>NAME</th>
+                    <th>INSTANCE ID</th>
+                    <th>TYPE</th>
+                    <th>PUBLIC IP</th>
+                    <th>PRIVATE IP</th>
+                    <th>AREA</th>
+                    <th>STATE</th>
+                </tr>
+            </thead>
+            <tbody id="instances-tbody">
+            </tbody>
+        </table>
+
+        <div id="no-instances" style="display: none; text-align: center; padding: 2rem; color: rgba(0, 255, 0, 0.5);">
+            No instances found. Add instances using the button above.
+        </div>
+    </div>
+</div>
+
+<!-- Add Instance Modal -->
+<div id="add-instance-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.9); z-index: 1000; justify-content: center; align-items: center;">
+    <div style="background: rgba(0, 20, 0, 0.95); border: 2px solid #00ff00; padding: 2rem; max-width: 500px; width: 90%; box-shadow: 0 0 30px rgba(0, 255, 0, 0.5);">
+        <h3 style="color: #00ff00; margin-bottom: 1.5rem;">ADD EC2 INSTANCE</h3>
+
+        <div style="margin-bottom: 1rem;">
+            <label style="display: block; margin-bottom: 0.5rem; color: #00ff00;">Instance ID:</label>
+            <input type="text" id="instance-id-input" placeholder="i-0123456789abcdef0"
+                   style="width: 100%; background: rgba(0, 0, 0, 0.5); border: 1px solid #00ff00; color: #00ff00; padding: 0.8rem; font-family: 'Source Code Pro', monospace;">
+        </div>
+
+        <div style="margin-bottom: 1.5rem;">
+            <label style="display: block; margin-bottom: 0.5rem; color: #00ff00;">Map to Area:</label>
+            <select id="area-select"
+                    style="width: 100%; background: rgba(0, 0, 0, 0.5); border: 1px solid #00ff00; color: #00ff00; padding: 0.8rem; font-family: 'Source Code Pro', monospace;">
+                <option value="">-- Select Area --</option>
+                <option value="engineering">Engineering</option>
+                <option value="hr">HR</option>
+                <option value="product">Product</option>
+            </select>
+        </div>
+
+        <div style="display: flex; gap: 1rem;">
+            <button onclick="addInstance()"
+                    style="flex: 1; background: rgba(0, 255, 0, 0.2); border: 2px solid #00ff00; color: #00ff00; padding: 0.8rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-weight: 700; text-transform: uppercase;">
+                ADD
+            </button>
+            <button onclick="closeModal()"
+                    style="flex: 1; background: rgba(255, 0, 0, 0.2); border: 2px solid #ff0000; color: #ff0000; padding: 0.8rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-weight: 700; text-transform: uppercase;">
+                CANCEL
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+// Fetch and display instances
+async function refreshInstances() {
+    document.getElementById('loading').style.display = 'block';
+    document.getElementById('instances-table').style.display = 'none';
+    document.getElementById('no-instances').style.display = 'none';
+
+    try {
+        const response = await fetch('/api/ec2/instances');
+        const data = await response.json();
+
+        if (data.instances && data.instances.length > 0) {
+            displayInstances(data.instances);
+        } else {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('no-instances').style.display = 'block';
+        }
+    } catch (error) {
+        console.error('Error fetching instances:', error);
+        showStatus('Error fetching instances: ' + error.message, 'error');
+        document.getElementById('loading').style.display = 'none';
+    }
+}
+
+function displayInstances(instances) {
+    const tbody = document.getElementById('instances-tbody');
+    tbody.innerHTML = '';
+
+    instances.forEach(instance => {
+        const row = document.createElement('tr');
+
+        const stateColor = instance.state === 'running' ? '#00ff00' :
+                          instance.state === 'stopped' ? '#ffaa00' : '#ff0000';
+
+        // Create cells safely without innerHTML
+        const nameCell = document.createElement('td');
+        nameCell.textContent = instance.name;
+        row.appendChild(nameCell);
+
+        const idCell = document.createElement('td');
+        idCell.textContent = instance.instance_id;
+        row.appendChild(idCell);
+
+        const typeCell = document.createElement('td');
+        typeCell.textContent = instance.instance_type;
+        row.appendChild(typeCell);
+
+        const publicIpCell = document.createElement('td');
+        publicIpCell.textContent = instance.public_ip;
+        row.appendChild(publicIpCell);
+
+        const privateIpCell = document.createElement('td');
+        privateIpCell.textContent = instance.private_ip;
+        row.appendChild(privateIpCell);
+
+        const areaCell = document.createElement('td');
+        const areaBadge = document.createElement('span');
+        areaBadge.className = 'badge';
+        areaBadge.textContent = instance.area;
+        areaCell.appendChild(areaBadge);
+        row.appendChild(areaCell);
+
+        const stateCell = document.createElement('td');
+        stateCell.textContent = instance.state.toUpperCase();
+        stateCell.style.color = stateColor;
+        row.appendChild(stateCell);
+
+        tbody.appendChild(row);
+    });
+
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('instances-table').style.display = 'table';
+}
+
+function showAddInstanceModal() {
+    document.getElementById('add-instance-modal').style.display = 'flex';
+}
+
+function closeModal() {
+    document.getElementById('add-instance-modal').style.display = 'none';
+    document.getElementById('instance-id-input').value = '';
+    document.getElementById('area-select').value = '';
+}
+
+async function addInstance() {
+    const instanceId = document.getElementById('instance-id-input').value.trim();
+    const area = document.getElementById('area-select').value;
+
+    if (!instanceId || !area) {
+        showStatus('Please provide both Instance ID and Area', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/ec2/tag-instance', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                instance_id: instanceId,
+                area: area
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showStatus(data.message, 'success');
+            closeModal();
+            refreshInstances();
+        } else {
+            showStatus(data.message, 'error');
+        }
+    } catch (error) {
+        showStatus('Error adding instance: ' + error.message, 'error');
+    }
+}
+
+function showStatus(message, type) {
+    const statusDiv = document.getElementById('status-message');
+    statusDiv.textContent = message;
+    statusDiv.style.display = 'block';
+
+    if (type === 'success') {
+        statusDiv.style.background = 'rgba(0, 100, 0, 0.5)';
+        statusDiv.style.borderColor = '#00ff00';
+        statusDiv.style.color = '#00ff00';
+    } else {
+        statusDiv.style.background = 'rgba(100, 0, 0, 0.5)';
+        statusDiv.style.borderColor = '#ff0000';
+        statusDiv.style.color = '#ff0000';
+    }
+
+    setTimeout(() => {
+        statusDiv.style.display = 'none';
+    }, 5000);
+}
+
+// Load instances on page load
+refreshInstances();
+</script>
+{% endblock %}
+EOFEC2
+
+# Create password reset custom flow template
+cat > /opt/employee-portal/templates/password_reset.html << 'EOFRESETFLOW'
+{% extends "base.html" %}
+
+{% block title %}RESET PASSWORD - CAPSULE PORTAL{% endblock %}
+
+{% block content %}
+<div class="crt-container">
+    <pre class="ascii-art">
+ ██████╗ ███████╗███████╗███████╗████████╗
+ ██╔══██╗██╔════╝██╔════╝██╔════╝╚══██╔══╝
+ ██████╔╝█████╗  ███████╗█████╗     ██║
+ ██╔══██╗██╔══╝  ╚════██║██╔══╝     ██║
+ ██║  ██║███████╗███████║███████╗   ██║
+ ╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝   ╚═╝
+
+ ██████╗  █████╗ ███████╗███████╗██╗    ██╗ ██████╗ ██████╗ ██████╗
+ ██╔══██╗██╔══██╗██╔════╝██╔════╝██║    ██║██╔═══██╗██╔══██╗██╔══██╗
+ ██████╔╝███████║███████╗███████╗██║ █╗ ██║██║   ██║██████╔╝██║  ██║
+ ██╔═══╝ ██╔══██║╚════██║╚════██║██║███╗██║██║   ██║██╔══██╗██║  ██║
+ ██║     ██║  ██║███████║███████║╚███╔███╔╝╚██████╔╝██║  ██║██████╔╝
+ ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝ ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝╚═════╝
+    </pre>
+
+    <div class="content-box">
+        <h2>🔑 RESET YOUR PASSWORD</h2>
+
+        <p style="opacity: 0.8; margin-bottom: 2rem;">Follow the steps below to reset your password securely.</p>
+
+        <!-- STEP 1: EMAIL -->
+        <div id="step-email" class="reset-step">
+            <div class="step-header">
+                <span class="step-number">STEP 1</span>
+                <h3 style="display: inline; margin-left: 1rem;">ENTER YOUR EMAIL</h3>
+                <span id="email-check" class="step-status" style="display: none;">✓</span>
+            </div>
+
+            <div class="step-content" id="email-content">
+                <p style="margin-bottom: 1rem;">Enter the email address associated with your account.</p>
+
+                <div id="email-error" class="error-message" style="display: none;"></div>
+
+                <div class="form-group">
+                    <label for="email-input">Email Address:</label>
+                    <input type="email" id="email-input" class="form-control" placeholder="user@example.com" autocomplete="email" />
+                </div>
+
+                <button id="send-code-btn" class="btn-primary">
+                    <span id="send-code-text">SEND RESET CODE</span>
+                    <span id="send-code-loading" style="display: none;">⟳ SENDING...</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- STEP 2: CODE -->
+        <div id="step-code" class="reset-step" style="display: none;">
+            <div class="step-header">
+                <span class="step-number">STEP 2</span>
+                <h3 style="display: inline; margin-left: 1rem;">ENTER VERIFICATION CODE</h3>
+                <span id="code-check" class="step-status" style="display: none;">✓</span>
+            </div>
+
+            <div class="step-content" id="code-content">
+                <div id="code-success" class="success-message" style="display: none;">
+                    <strong>✓ Code sent!</strong> Check your email at <span id="code-destination"></span><br>
+                    <span style="opacity: 0.8; font-size: 0.9rem;">Code is valid for 1 hour.</span>
+                </div>
+
+                <div id="code-error" class="error-message" style="display: none;"></div>
+
+                <div class="form-group">
+                    <label for="code-input">Verification Code (6 digits):</label>
+                    <input type="text" id="code-input" class="form-control" placeholder="123456" maxlength="6" pattern="[0-9]{6}" autocomplete="off" />
+                </div>
+
+                <p style="font-size: 0.85rem; opacity: 0.7; margin-bottom: 1rem;">
+                    Didn't receive the code?
+                    <a href="#" id="resend-code-link" style="color: #00ff00; text-decoration: underline;">Resend</a>
+                    <span id="resend-cooldown" style="display: none; color: #ffff00;"></span>
+                </p>
+
+                <button id="verify-code-btn" class="btn-primary">
+                    <span id="verify-code-text">VERIFY CODE</span>
+                    <span id="verify-code-loading" style="display: none;">⟳ VERIFYING...</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- STEP 3: PASSWORD -->
+        <div id="step-password" class="reset-step" style="display: none;">
+            <div class="step-header">
+                <span class="step-number">STEP 3</span>
+                <h3 style="display: inline; margin-left: 1rem;">SET NEW PASSWORD</h3>
+            </div>
+
+            <div class="step-content" id="password-content">
+                <div id="password-error" class="error-message" style="display: none;"></div>
+
+                <div class="form-group">
+                    <label for="password-input">New Password:</label>
+                    <div style="position: relative;">
+                        <input type="password" id="password-input" class="form-control" placeholder="Enter new password" autocomplete="new-password" />
+                        <button type="button" id="toggle-password" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: #00ff00; cursor: pointer; font-size: 1.2rem;">
+                            👁
+                        </button>
+                    </div>
+                </div>
+
+                <div class="password-requirements" style="margin: 1rem 0; padding: 1rem; background: rgba(0, 20, 0, 0.5); border-left: 3px solid #00ff00;">
+                    <p style="margin-bottom: 0.5rem; font-weight: bold;">Password Requirements:</p>
+                    <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.9rem;">
+                        <li id="req-length" class="requirement">
+                            <span class="req-icon">✗</span> Minimum 8 characters
+                        </li>
+                        <li id="req-uppercase" class="requirement">
+                            <span class="req-icon">✗</span> At least one uppercase letter (A-Z)
+                        </li>
+                        <li id="req-lowercase" class="requirement">
+                            <span class="req-icon">✗</span> At least one lowercase letter (a-z)
+                        </li>
+                        <li id="req-number" class="requirement">
+                            <span class="req-icon">✗</span> At least one number (0-9)
+                        </li>
+                        <li id="req-special" class="requirement">
+                            <span class="req-icon">✗</span> At least one special character (!@#$%^&*)
+                        </li>
+                    </ul>
+                </div>
+
+                <button id="reset-password-btn" class="btn-primary" disabled>
+                    <span id="reset-password-text">RESET PASSWORD</span>
+                    <span id="reset-password-loading" style="display: none;">⟳ RESETTING...</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="nav-links" style="margin-top: 2rem;">
+            <a href="/logout">← RETURN TO LOGIN</a>
+        </div>
+    </div>
+</div>
+
+<style>
+.reset-step {
+    margin-bottom: 2rem;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}
+
+.reset-step.completed {
+    opacity: 0.6;
+}
+
+.reset-step.active {
+    border: 2px solid #00ff00;
+    padding: 1.5rem;
+    background: rgba(0, 255, 0, 0.05);
+    animation: glow 2s infinite;
+}
+
+@keyframes glow {
+    0%, 100% { box-shadow: 0 0 10px rgba(0, 255, 0, 0.3); }
+    50% { box-shadow: 0 0 20px rgba(0, 255, 0, 0.5); }
+}
+
+.step-header {
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+}
+
+.step-number {
+    background: rgba(0, 255, 0, 0.2);
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    padding: 0.3rem 0.8rem;
+    font-weight: bold;
+    font-size: 0.85rem;
+}
+
+.step-status {
+    color: #00ff00;
+    font-size: 1.5rem;
+    margin-left: auto;
+}
+
+.step-content {
+    padding-left: 1rem;
+}
+
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: #00ff00;
+    font-weight: bold;
+}
+
+.form-control {
+    width: 100%;
+    padding: 0.8rem;
+    background: rgba(0, 0, 0, 0.7);
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier Prime', monospace;
+    font-size: 1rem;
+}
+
+.form-control:focus {
+    outline: none;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+}
+
+.error-message {
+    background: rgba(255, 0, 0, 0.2);
+    border: 2px solid #ff0000;
+    color: #ff0000;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.success-message {
+    background: rgba(0, 255, 0, 0.2);
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.requirement {
+    margin: 0.3rem 0;
+    transition: color 0.3s ease;
+}
+
+.requirement.met {
+    color: #00ff00;
+}
+
+.requirement.met .req-icon {
+    color: #00ff00;
+}
+
+.req-icon {
+    display: inline-block;
+    width: 1.5rem;
+    color: #ff0000;
+    font-weight: bold;
+}
+</style>
+
+<script>
+// State
+let userEmail = '';
+let verificationCode = '';
+let resendCooldown = 0;
+let resendInterval = null;
+
+// Password requirements
+const requirements = {
+    length: { regex: /.{8,}/, id: 'req-length' },
+    uppercase: { regex: /[A-Z]/, id: 'req-uppercase' },
+    lowercase: { regex: /[a-z]/, id: 'req-lowercase' },
+    number: { regex: /[0-9]/, id: 'req-number' },
+    special: { regex: /[!@#$%^&*(),.?":{}|<>]/, id: 'req-special' }
+};
+
+// Elements
+const emailInput = document.getElementById('email-input');
+const sendCodeBtn = document.getElementById('send-code-btn');
+const codeInput = document.getElementById('code-input');
+const verifyCodeBtn = document.getElementById('verify-code-btn');
+const passwordInput = document.getElementById('password-input');
+const resetPasswordBtn = document.getElementById('reset-password-btn');
+const togglePasswordBtn = document.getElementById('toggle-password');
+const resendLink = document.getElementById('resend-code-link');
+
+// STEP 1: Send Code
+sendCodeBtn.addEventListener('click', async () => {
+    const email = emailInput.value.trim().toLowerCase();
+
+    if (!email) {
+        showError('email-error', 'Please enter your email address');
+        return;
+    }
+
+    // Basic email validation
+    if (!email.includes('@')) {
+        showError('email-error', 'Please enter a valid email address');
+        return;
+    }
+
+    setLoading('send-code', true);
+    hideError('email-error');
+
+    try {
+        const response = await fetch('/api/password-reset/send-code', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            userEmail = email;
+            document.getElementById('code-destination').textContent = data.destination;
+            document.getElementById('code-success').style.display = 'block';
+
+            // Complete step 1
+            completeStep('email');
+            revealStep('code');
+
+            // Start resend cooldown
+            startResendCooldown();
+        } else {
+            showError('email-error', data.message || 'Failed to send code');
+        }
+    } catch (error) {
+        showError('email-error', 'Network error. Please try again.');
+    } finally {
+        setLoading('send-code', false);
+    }
+});
+
+// STEP 2: Verify Code
+verifyCodeBtn.addEventListener('click', async () => {
+    const code = codeInput.value.trim();
+
+    if (!code) {
+        showError('code-error', 'Please enter the verification code');
+        return;
+    }
+
+    if (code.length !== 6 || !/^\d+$/.test(code)) {
+        showError('code-error', 'Code must be 6 digits');
+        return;
+    }
+
+    setLoading('verify-code', true);
+    hideError('code-error');
+
+    try {
+        const response = await fetch('/api/password-reset/verify-code', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            verificationCode = code;
+
+            // Complete step 2
+            completeStep('code');
+            revealStep('password');
+
+            // Focus password input
+            passwordInput.focus();
+        } else {
+            showError('code-error', data.message || 'Invalid code');
+        }
+    } catch (error) {
+        showError('code-error', 'Network error. Please try again.');
+    } finally {
+        setLoading('verify-code', false);
+    }
+});
+
+// STEP 3: Reset Password
+resetPasswordBtn.addEventListener('click', async () => {
+    const password = passwordInput.value;
+
+    if (!password) {
+        showError('password-error', 'Please enter a new password');
+        return;
+    }
+
+    if (!checkAllRequirements(password)) {
+        showError('password-error', 'Password must meet all requirements');
+        return;
+    }
+
+    setLoading('reset-password', true);
+    hideError('password-error');
+
+    try {
+        const response = await fetch('/api/password-reset/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: userEmail,
+                code: verificationCode,
+                password: password
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Redirect to success page
+            window.location.href = '/password-reset-success';
+        } else {
+            if (data.error === 'expired') {
+                showError('password-error', data.message + ' <a href="#" onclick="location.reload()" style="color: #00ff00; text-decoration: underline;">Start over</a>');
+            } else {
+                showError('password-error', data.message || 'Failed to reset password');
+            }
+        }
+    } catch (error) {
+        showError('password-error', 'Network error. Please try again.');
+    } finally {
+        setLoading('reset-password', false);
+    }
+});
+
+// Password requirement checking
+passwordInput.addEventListener('input', () => {
+    const password = passwordInput.value;
+    let allMet = true;
+
+    for (const [key, req] of Object.entries(requirements)) {
+        const element = document.getElementById(req.id);
+        const met = req.regex.test(password);
+
+        if (met) {
+            element.classList.add('met');
+            element.querySelector('.req-icon').textContent = '✓';
+        } else {
+            element.classList.remove('met');
+            element.querySelector('.req-icon').textContent = '✗';
+            allMet = false;
+        }
+    }
+
+    resetPasswordBtn.disabled = !allMet;
+});
+
+// Toggle password visibility
+togglePasswordBtn.addEventListener('click', () => {
+    if (passwordInput.type === 'password') {
+        passwordInput.type = 'text';
+        togglePasswordBtn.textContent = '👁';
+    } else {
+        passwordInput.type = 'password';
+        togglePasswordBtn.textContent = '👁';
+    }
+});
+
+// Resend code
+resendLink.addEventListener('click', async (e) => {
+    e.preventDefault();
+
+    if (resendCooldown > 0) {
+        return;
+    }
+
+    setLoading('send-code', true);
+
+    try {
+        const response = await fetch('/api/password-reset/send-code', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: userEmail })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            document.getElementById('code-success').style.display = 'block';
+            document.getElementById('code-destination').textContent = data.destination;
+            startResendCooldown();
+            hideError('code-error');
+        } else {
+            showError('code-error', data.message || 'Failed to resend code');
+        }
+    } catch (error) {
+        showError('code-error', 'Network error. Please try again.');
+    } finally {
+        setLoading('send-code', false);
+    }
+});
+
+// Helper functions
+function completeStep(step) {
+    const stepEl = document.getElementById(`step-${step}`);
+    stepEl.classList.add('completed');
+    stepEl.classList.remove('active');
+    document.getElementById(`${step}-check`).style.display = 'inline';
+
+    // Disable inputs
+    const content = document.getElementById(`${step}-content`);
+    const inputs = content.querySelectorAll('input, button');
+    inputs.forEach(input => input.disabled = true);
+}
+
+function revealStep(step) {
+    const stepEl = document.getElementById(`step-${step}`);
+    stepEl.style.display = 'block';
+    stepEl.classList.add('active');
+
+    // Smooth scroll to step
+    setTimeout(() => {
+        stepEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 100);
+}
+
+function showError(errorId, message) {
+    const errorEl = document.getElementById(errorId);
+    errorEl.innerHTML = `<strong>Error:</strong> ${message}`;
+    errorEl.style.display = 'block';
+}
+
+function hideError(errorId) {
+    document.getElementById(errorId).style.display = 'none';
+}
+
+function setLoading(buttonPrefix, isLoading) {
+    const textEl = document.getElementById(`${buttonPrefix}-text`);
+    const loadingEl = document.getElementById(`${buttonPrefix}-loading`);
+    const btnEl = document.getElementById(`${buttonPrefix}-btn`);
+
+    if (isLoading) {
+        textEl.style.display = 'none';
+        loadingEl.style.display = 'inline';
+        btnEl.disabled = true;
+    } else {
+        textEl.style.display = 'inline';
+        loadingEl.style.display = 'none';
+        btnEl.disabled = false;
+    }
+}
+
+function checkAllRequirements(password) {
+    return Object.values(requirements).every(req => req.regex.test(password));
+}
+
+function startResendCooldown() {
+    resendCooldown = 60;
+    resendLink.style.display = 'none';
+    document.getElementById('resend-cooldown').style.display = 'inline';
+
+    if (resendInterval) clearInterval(resendInterval);
+
+    resendInterval = setInterval(() => {
+        resendCooldown--;
+        document.getElementById('resend-cooldown').textContent = `(Wait ${resendCooldown}s)`;
+
+        if (resendCooldown <= 0) {
+            clearInterval(resendInterval);
+            resendLink.style.display = 'inline';
+            document.getElementById('resend-cooldown').style.display = 'none';
+        }
+    }, 1000);
+}
+
+// Enable enter key on email input
+emailInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') sendCodeBtn.click();
+});
+
+// Enable enter key on code input
+codeInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') verifyCodeBtn.click();
+});
+
+// Enable enter key on password input
+passwordInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter' && !resetPasswordBtn.disabled) resetPasswordBtn.click();
+});
+</script>
+{% endblock %}
+EOFRESETFLOW
+
+# Create password reset success template
+cat > /opt/employee-portal/templates/password_reset_success.html << 'EOFRESETSUCC'
+{% extends "base.html" %}
+
+{% block title %}PASSWORD RESET SUCCESSFUL - CAPSULE PORTAL{% endblock %}
+
+{% block content %}
+<div class="crt-container">
+    <pre class="ascii-art">
+ ███████╗██╗   ██╗ ██████╗ ██████╗███████╗███████╗███████╗██╗
+ ██╔════╝██║   ██║██╔════╝██╔════╝██╔════╝██╔════╝██╔════╝██║
+ ███████╗██║   ██║██║     ██║     █████╗  ███████╗███████╗██║
+ ╚════██║██║   ██║██║     ██║     ██╔══╝  ╚════██║╚════██║╚═╝
+ ███████║╚██████╔╝╚██████╗╚██████╗███████╗███████║███████║██╗
+ ╚══════╝ ╚═════╝  ╚═════╝ ╚═════╝╚══════╝╚══════╝╚══════╝╚═╝
+    </pre>
+
+    <div class="content-box">
+        <div style="text-align: center; padding: 2rem 0;">
+            <div style="font-size: 4rem; color: #00ff00; margin-bottom: 1rem;">✓</div>
+            <h2 style="color: #00ff00; margin-bottom: 1rem;">PASSWORD RESET SUCCESSFUL!</h2>
+        </div>
+
+        <div class="info-section" style="background: rgba(0, 255, 0, 0.1); border: 2px solid #00ff00; padding: 2rem;">
+            <p style="font-size: 1.1rem; margin-bottom: 1rem;">
+                <strong>Your password has been reset successfully.</strong>
+            </p>
+            <p style="opacity: 0.9; margin-bottom: 1.5rem;">
+                You can now log in with your new password.
+            </p>
+        </div>
+
+        <div class="warning-box" style="margin-top: 2rem; background: rgba(255, 200, 0, 0.1); border: 2px solid #ffc107; padding: 2rem;">
+            <h3 style="color: #ffc107; margin-bottom: 1rem;">⚠️ IMPORTANT - NEXT STEPS</h3>
+            <p style="margin-bottom: 1rem;"><strong>Follow these steps carefully to avoid login errors:</strong></p>
+            <ol style="margin-left: 2rem; line-height: 2; font-size: 0.95rem;">
+                <li><strong>Click the "LOGIN WITH NEW PASSWORD" button below</strong><br>
+                    <span style="opacity: 0.8; font-size: 0.85rem;">This will take you to the Cognito login page</span>
+                </li>
+                <li><strong>Enter your email and your NEW password</strong><br>
+                    <span style="opacity: 0.8; font-size: 0.85rem;">Use the password you just created, not your old one</span>
+                </li>
+                <li><strong>Click "Sign in"</strong><br>
+                    <span style="opacity: 0.8; font-size: 0.85rem;">You will be logged into the portal</span>
+                </li>
+            </ol>
+
+            <div style="background: rgba(255, 0, 0, 0.2); border-left: 3px solid #ff0000; padding: 1rem; margin-top: 1.5rem;">
+                <p style="color: #ff6b6b; font-weight: bold; margin-bottom: 0.5rem;">❌ DO NOT:</p>
+                <ul style="margin-left: 2rem; font-size: 0.9rem; line-height: 1.8;">
+                    <li>Click "Forgot your password?" on the login page (you just reset it!)</li>
+                    <li>Use your browser's back button after clicking login</li>
+                    <li>Try to bookmark or manually navigate to OAuth callback URLs</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="text-align: center; margin-top: 3rem;">
+            <a href="/" class="btn-primary" style="display: inline-block; padding: 1rem 2rem; font-size: 1.1rem;">
+                🔐 LOGIN WITH NEW PASSWORD
+            </a>
+            <p style="margin-top: 1rem; opacity: 0.7; font-size: 0.85rem;">
+                This will take you to the login page where you'll enter your new password
+            </p>
+        </div>
+
+        <div class="info-section" style="margin-top: 2rem;">
+            <h3>💡 SECURITY TIPS</h3>
+            <ul style="margin-left: 2rem; margin-top: 1rem; line-height: 1.8;">
+                <li>Update your password manager with the new password</li>
+                <li>Don't reuse this password on other websites</li>
+                <li>Enable Multi-Factor Authentication (MFA) for extra security</li>
+                <li>Never share your password with anyone</li>
+            </ul>
+        </div>
+
+        <div class="nav-links" style="margin-top: 2rem;">
+            <p style="text-align: center; opacity: 0.7; font-size: 0.9rem;">
+                Having trouble? Contact your administrator for help.
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+EOFRESETSUCC
 
 # Set ownership
 chown -R app:app /opt/employee-portal

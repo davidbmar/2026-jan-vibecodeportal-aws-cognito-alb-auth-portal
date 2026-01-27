@@ -1,0 +1,346 @@
+
+Running 42 tests using 1 worker
+
+Page title: Signin
+✅ MFA setup page loaded successfully
+  ✓   1 [chromium] › tests/mfa.spec.js:9:3 › MFA Setup Flow Tests › should load MFA setup page successfully (893ms)
+ℹ️  Email not visible on page load
+  ✓   2 [chromium] › tests/mfa.spec.js:25:3 › MFA Setup Flow Tests › should display user email correctly (807ms)
+Found 0 step indicators
+  ✘   3 [chromium] › tests/mfa.spec.js:47:3 › MFA Setup Flow Tests › should show MFA setup steps (829ms)
+⚠️  Authenticator app instructions not found
+  ✓   4 [chromium] › tests/mfa.spec.js:77:3 › MFA Setup Flow Tests › should have authenticator app installation instructions (889ms)
+⚠️  /api/mfa/init not called (may require authentication)
+  ✓   5 [chromium] › tests/mfa.spec.js:106:3 › MFA Setup Flow Tests › should call /api/mfa/init and receive TOTP secret (4.1s)
+Canvas elements found: 0
+⚠️  QR code not found (may require authentication)
+  ✓   6 [chromium] › tests/mfa.spec.js:163:3 › MFA Setup Flow Tests › should display QR code (4.1s)
+ℹ️  Secret key not visible (may require authentication)
+  ✓   7 [chromium] › tests/mfa.spec.js:205:3 › MFA Setup Flow Tests › should display secret key for manual entry (4.1s)
+ℹ️  Verification code input not found (may be in later step)
+  ✓   8 [chromium] › tests/mfa.spec.js:237:3 › MFA Setup Flow Tests › should have verification code input field (881ms)
+ℹ️  Verify button not visible (may require previous steps)
+  ✓   9 [chromium] › tests/mfa.spec.js:270:3 › MFA Setup Flow Tests › should have verify button (893ms)
+MFA Setup Flow Structure:
+  ✅ Page loads
+  ⚠️  Instructions visible
+  ⚠️  QR code area present
+  ⚠️  Secret key area present
+  ✅ Code input present
+  ⚠️  Verify button present
+  ✘  10 [chromium] › tests/mfa.spec.js:289:3 › MFA Setup Flow Tests › should test complete MFA setup flow structure (4.2s)
+Page title: RESET PASSWORD - CAPSULE PORTAL
+✅ Password reset page loaded successfully
+  ✓  11 [chromium] › tests/password-reset.spec.js:9:3 › Password Reset Flow Tests › should load password reset page successfully (986ms)
+✅ Step 1 indicator found
+✅ Email input found: input[type="email"]
+  Email input enabled: true
+  ✓  12 [chromium] › tests/password-reset.spec.js:24:3 › Password Reset Flow Tests › should display Step 1: Email input (962ms)
+Send button enabled: true
+✅ Send Reset Code button found
+  ✓  13 [chromium] › tests/password-reset.spec.js:62:3 › Password Reset Flow Tests › should have "Send Reset Code" button (895ms)
+Found 0/5 password requirements
+ℹ️  Password requirements may be shown in later steps
+  ✓  14 [chromium] › tests/password-reset.spec.js:76:3 › Password Reset Flow Tests › should show password requirements (878ms)
+Entered email: test@example.com
+Clicked send button
+API called: https://portal.capsule-playground.com/api/password-reset/send-code
+Status: 200
+✅ Step 2 appeared after submission
+✅ Success message: ✓ Code sent!
+  ✓  15 [chromium] › tests/password-reset.spec.js:106:3 › Password Reset Flow Tests › should test email submission flow (4.2s)
+Password Reset Steps:
+  ✅ Step 1 visible
+  ℹ️  Step 2 hidden (progressive disclosure)
+  ℹ️  Step 3 hidden (progressive disclosure)
+✅ Progressive disclosure structure present
+  ✓  16 [chromium] › tests/password-reset.spec.js:165:3 › Password Reset Flow Tests › should have progressive disclosure structure (1.2s)
+✅ Verification code input found: input[maxlength="6"]
+✅ Step 2: Verification code input present
+  ✓  17 [chromium] › tests/password-reset.spec.js:192:3 › Password Reset Flow Tests › should check for verification code input (Step 2) (1.0s)
+Found 1 password input fields
+✅ Step 3: Password input fields present
+  ✓  18 [chromium] › tests/password-reset.spec.js:222:3 › Password Reset Flow Tests › should check for password input fields (Step 3) (1.0s)
+Current URL: https://portal.capsule-playground.com/password-reset-success
+⚠️  Password reset success page not found or shows error
+  ✓  19 [chromium] › tests/password-reset.spec.js:250:3 › Password Reset Flow Tests › should check for success page route (946ms)
+Success Page UX Elements:
+  ✅ Important/Next Steps warning
+  ⚠️  Numbered instructions
+  ✅ DO NOT warnings
+  ✅ Login button
+UX improvements: 3/4 elements found
+  ✓  20 [chromium] › tests/password-reset.spec.js:291:3 › Password Reset Flow Tests › should have improved UX messaging on success page (1.0s)
+✅ Login button found
+  Button type: A
+  Link href: /
+✅ Button links to correct destination
+  ✓  21 [chromium] › tests/password-reset.spec.js:333:3 › Password Reset Flow Tests › should verify "LOGIN WITH NEW PASSWORD" button functionality (1.4s)
+ℹ️  Email masking not found or not applicable
+  ✓  22 [chromium] › tests/password-reset.spec.js:362:3 › Password Reset Flow Tests › should check for email masking in confirmation message (3.1s)
+ℹ️  Code expiration messaging not visible (may appear after code sent)
+  ✓  23 [chromium] › tests/password-reset.spec.js:394:3 › Password Reset Flow Tests › should verify code expiration messaging (902ms)
+ℹ️  Resend option not visible (may appear after code sent)
+  ✓  24 [chromium] › tests/password-reset.spec.js:422:3 › Password Reset Flow Tests › should check for resend code option (1.0s)
+  ✘  25 [chromium] › tests/settings.spec.js:11:3 › Settings Page Tests › should display correct email address (not UUID) (11.6s)
+  ✘  26 [chromium] › tests/settings.spec.js:33:3 › Settings Page Tests › should display only authenticator app MFA option (no SMS) (708ms)
+  ✘  27 [chromium] › tests/settings.spec.js:51:3 › Settings Page Tests › should display 9 password reset steps (11.5s)
+Found 0/7 key instruction elements
+  ✘  28 [chromium] › tests/settings.spec.js:79:3 › Settings Page Tests › should have password reset instructions with key details (902ms)
+ℹ️  PRO TIP not found (may be optional)
+  ✓  29 [chromium] › tests/settings.spec.js:110:3 › Settings Page Tests › should display PRO TIP warning box (868ms)
+  ✓  30 [chromium] › tests/settings.spec.js:132:3 › Settings Page Tests › should display user groups (808ms)
+✅ Home page loaded
+Navigated to Settings: https://employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com/login?client_id=7qa8jhkle0n5hfqq2pa3ld30b&redirect_uri=https%3A%2F%2Fportal.capsule-playground.com%2Foauth2%2Fidpresponse&response_type=code&scope=openid&state=GQ%2FFTZ1YhzFApGtj5OL1dXjfWEQriqpaKtg%2B8GYZihV%2Baji9uVQeeotnOSa%2Bf26QupwTAHdySQxTTVkFcxgwefbb3l128K4SN12L5V02cGMAEFAwpXpsurv3WRY1f30h5lna0BKjQxYAebN61NC7NmtqSr6ufv3dD3Oft5nyH8xejHASJzXoTbyn%2FbMDkV59QVtpZ3DrOe6M4SfXPRXvvcfLJxMTO9UzZJb9pkYfbW6CO0v2amfVAWPdu%2Bt2Cd21xw%3D%3D
+  ✅ Settings page loaded successfully
+Navigated to MFA Setup: https://employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com/login?client_id=7qa8jhkle0n5hfqq2pa3ld30b&redirect_uri=https%3A%2F%2Fportal.capsule-playground.com%2Foauth2%2Fidpresponse&response_type=code&scope=openid&state=3jdnN%2F%2FdRBqsHFCYmL9PQ2IlLZLsD59b4kBtrBiwFWWTA2rCNFXlzh%2BhJFmx5uBQMT9BezTw4dh5uDUGiKf7rpK9msd4tXHPFGjl70H%2FVx53UNWhtwT6mAoKMuyElfH6JZn69jZ9Kj%2BBkiXg6BJMVEK75HpwUhS4NK44dus7q7RSVjEF26N%2Betgd3YSWfas28ItNcRwTNE%2FerZV9X9jPdcQCdVRnYkicbSQ1xZGVSlIEFB%2F02m1MVlxgTmwb40JIsEA%3D
+  ✅ MFA Setup page loaded successfully
+Navigated to Password Reset: https://portal.capsule-playground.com/password-reset
+  ✅ Password Reset page loaded successfully
+Navigated to Password Reset Success: https://portal.capsule-playground.com/password-reset-success
+  ⚠️  Password Reset Success page may require authentication
+✅ Navigation through major sections complete
+  ✓  31 [chromium] › tests/user-journey.spec.js:4:3 › Complete User Journey Tests › should navigate from home page through major sections (5.2s)
+ℹ️  Navigation structure not found (may be minimal UI)
+  ✓  32 [chromium] › tests/user-journey.spec.js:43:3 › Complete User Journey Tests › should have working navigation links (816ms)
+Found 0 authentication indicators
+ℹ️  No authentication indicators (may require login)
+  ✓  33 [chromium] › tests/user-journey.spec.js:89:3 › Complete User Journey Tests › should check for authentication indicators (887ms)
+ℹ️  Logout button not found (may require authentication)
+  ✓  34 [chromium] › tests/user-journey.spec.js:123:3 › Complete User Journey Tests › should test logout and login flow (881ms)
+Errors found: 0
+Warnings found: 0
+✅ No JavaScript errors detected
+  ✓  35 [chromium] › tests/user-journey.spec.js:166:3 › Complete User Journey Tests › should verify no JavaScript errors on page load (6.5s)
+Testing /...
+Testing /settings...
+Testing /mfa-setup...
+Testing /password-reset...
+Testing /password-reset-success...
+✅ No 401/403 errors detected during navigation
+  ✓  36 [chromium] › tests/user-journey.spec.js:209:3 › Complete User Journey Tests › should verify no 401/403 errors during navigation (8.3s)
+1. Loaded settings page
+⚠️  MFA setup button not found on settings page
+  ✓  37 [chromium] › tests/user-journey.spec.js:252:3 › Complete User Journey Tests › should test complete settings to MFA flow (893ms)
+1. Loaded settings page
+ℹ️  Direct password reset link not found (users follow instructions)
+  ✓  38 [chromium] › tests/user-journey.spec.js:291:3 › Complete User Journey Tests › should test password reset from settings instructions (952ms)
+Testing Desktop (1920x1080)
+  Body visible: ✅
+  ✅ No horizontal scroll
+Testing Tablet (768x1024)
+  Body visible: ✅
+  ✅ No horizontal scroll
+Testing Mobile (375x667)
+  Body visible: ✅
+  ✅ No horizontal scroll
+✅ Responsive design check complete
+  ✓  39 [chromium] › tests/user-journey.spec.js:321:3 › Complete User Journey Tests › should verify responsive design elements (2.4s)
+1. Home page
+2. Settings page
+3. MFA setup page
+4. Went back to: https://employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com/login?client_id=7qa8jhkle0n5hfqq2pa3ld30b&redirect_uri=https%3A%2F%2Fportal.capsule-playground.com%2Foauth2%2Fidpresponse&response_type=code&scope=openid&state=LjTFGr2Ee2e6N5dPXG39AeRWYU0zhqr%2BS%2FBvneSZt85DT2TSwlArsXa876yoqPKOs5p31lko6aC%2F86DTSh2tnjjTJRbiOgQomQXVicFzmk5bPwoz8BFtMKjESfLM9ezhr8Cl0vkGXMnd9%2FviCktHgfcQsWbWMFtGVlq%2BFPev8hYwaCh1eYMfSRIrUjLqbFHqhfM9Npe9PQOLLWaZJuUNgTaBVImDZ7F39Pd%2FVb6TlRQkQrthePfx3PFNSek48Po1SA%3D%3D
+5. Went forward to: https://employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com/login?client_id=7qa8jhkle0n5hfqq2pa3ld30b&redirect_uri=https%3A%2F%2Fportal.capsule-playground.com%2Foauth2%2Fidpresponse&response_type=code&scope=openid&state=p7AYQuuA6bUTkDDiGQWSn9D%2Fs14jsnYE6G5ZiEfK0JvZojj2AAfSxnDcb0yTE4rmN8%2FumqA3EtvJumZs%2BPud0fON4hwFRwbVvirezC4ZTee2irzDjAjWlf3K5w4A9HjIKIgBKSuBt4YRJs6byOBB9Ha9rRrEKzrv0dB%2FEof3mlEVjfstzhcvoN97ukEMLsXNoNW%2BdhEI43aiy285uo6DZ5nB6J47omGuOiXNoQHRsYGNcdmDMEBVOfbPsfmtSQ7UoTU%3D
+✅ Browser navigation test complete
+  ✓  40 [chromium] › tests/user-journey.spec.js:359:3 › Complete User Journey Tests › should test browser back/forward navigation (2.9s)
+Home: 594ms
+  ✅ Page loaded quickly
+Settings: 557ms
+  ✅ Page loaded quickly
+MFA Setup: 552ms
+  ✅ Page loaded quickly
+Password Reset: 627ms
+  ✅ Page loaded quickly
+✅ Performance check complete
+  ✓  41 [chromium] › tests/user-journey.spec.js:396:3 › Complete User Journey Tests › should verify page performance (2.6s)
+Starting complete user journey test...
+
+✅ Step 1: Loaded home page
+✅ Step 2: Settings page (loaded)
+✅ Step 3: MFA setup option exists
+✅ Step 4: MFA setup page loaded
+✅ Step 5: QR code area exists
+✅ Step 6: Password reset ready
+✅ Step 7: Success page with login button
+✅ Step 8: Returned to home page
+
+✅ Complete end-to-end user journey test passed!
+  ✓  42 [chromium] › tests/user-journey.spec.js:425:3 › Complete User Journey Tests › should test complete end-to-end user journey (5.8s)
+
+
+  1) [chromium] › tests/mfa.spec.js:47:3 › MFA Setup Flow Tests › should show MFA setup steps ──────
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBeGreaterThan[2m([22m[32mexpected[39m[2m)[22m
+
+    Expected: > [32m0[39m
+    Received:   [31m0[39m
+
+      70 |
+      71 |     console.log(`Found ${stepsFound} step indicators`);
+    > 72 |     expect(stepsFound).toBeGreaterThan(0);
+         |                        ^
+      73 |
+      74 |     console.log('✅ MFA setup steps displayed');
+      75 |   });
+        at /home/ubuntu/cognito_alb_ec2/tests/playwright/tests/mfa.spec.js:72:24
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/mfa-MFA-Setup-Flow-Tests-should-show-MFA-setup-steps-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/mfa-MFA-Setup-Flow-Tests-should-show-MFA-setup-steps-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/mfa-MFA-Setup-Flow-Tests-should-show-MFA-setup-steps-chromium/error-context.md
+
+  2) [chromium] › tests/mfa.spec.js:289:3 › MFA Setup Flow Tests › should test complete MFA setup flow structure 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBeGreaterThanOrEqual[2m([22m[32mexpected[39m[2m)[22m
+
+    Expected: >= [32m3[39m
+    Received:    [31m2[39m
+
+      329 |     // Should have at least half of the elements
+      330 |     const successCount = Object.values(flowChecks).filter(v => v).length;
+    > 331 |     expect(successCount).toBeGreaterThanOrEqual(3);
+          |                          ^
+      332 |
+      333 |     console.log(`✅ MFA setup flow structure complete (${successCount}/6 elements found)`);
+      334 |   });
+        at /home/ubuntu/cognito_alb_ec2/tests/playwright/tests/mfa.spec.js:331:26
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/mfa-MFA-Setup-Flow-Tests-s-6e9c1-te-MFA-setup-flow-structure-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/mfa-MFA-Setup-Flow-Tests-s-6e9c1-te-MFA-setup-flow-structure-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/mfa-MFA-Setup-Flow-Tests-s-6e9c1-te-MFA-setup-flow-structure-chromium/error-context.md
+
+  3) [chromium] › tests/settings.spec.js:11:3 › Settings Page Tests › should display correct email address (not UUID) 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: locator('text=/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/').first()
+    Expected: visible
+    Timeout: 10000ms
+    Error: element(s) not found
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 10000ms[22m
+    [2m  - waiting for locator('text=/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/').first()[22m
+
+
+      17 |
+      18 |     // Should be visible
+    > 19 |     await expect(emailElement).toBeVisible({ timeout: 10000 });
+         |                                ^
+      20 |
+      21 |     // Get the email text
+      22 |     const emailText = await emailElement.textContent();
+        at /home/ubuntu/cognito_alb_ec2/tests/playwright/tests/settings.spec.js:19:32
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/settings-Settings-Page-Tes-b283d-ect-email-address-not-UUID--chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/settings-Settings-Page-Tes-b283d-ect-email-address-not-UUID--chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/settings-Settings-Page-Tes-b283d-ect-email-address-not-UUID--chromium/error-context.md
+
+  4) [chromium] › tests/settings.spec.js:33:3 › Settings Page Tests › should display only authenticator app MFA option (no SMS) 
+
+    Error: page.goto: net::ERR_NETWORK_CHANGED at https://portal.capsule-playground.com/settings
+    Call log:
+    [2m  - navigating to "https://portal.capsule-playground.com/settings", waiting until "load"[22m
+
+
+       6 |     // Note: In real scenario, this would require authentication
+       7 |     // For now, we'll test the page structure assuming auth headers are present
+    >  8 |     await page.goto('/settings');
+         |                ^
+       9 |   });
+      10 |
+      11 |   test('should display correct email address (not UUID)', async ({ page }) => {
+        at /home/ubuntu/cognito_alb_ec2/tests/playwright/tests/settings.spec.js:8:16
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/settings-Settings-Page-Tes-51f8c-ator-app-MFA-option-no-SMS--chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/settings-Settings-Page-Tes-51f8c-ator-app-MFA-option-no-SMS--chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+  5) [chromium] › tests/settings.spec.js:51:3 › Settings Page Tests › should display 9 password reset steps 
+
+    Error: [2mexpect([22m[31mlocator[39m[2m).[22mtoBeVisible[2m([22m[2m)[22m failed
+
+    Locator: locator('text=/password.*reset/i').first()
+    Expected: visible
+    Timeout: 10000ms
+    Error: element(s) not found
+
+    Call log:
+    [2m  - Expect "toBeVisible" with timeout 10000ms[22m
+    [2m  - waiting for locator('text=/password.*reset/i').first()[22m
+
+
+      54 |     // Look for password reset section
+      55 |     const passwordSection = page.locator('text=/password.*reset/i').first();
+    > 56 |     await expect(passwordSection).toBeVisible({ timeout: 10000 });
+         |                                   ^
+      57 |
+      58 |     // Count numbered steps (1-9)
+      59 |     const steps = [];
+        at /home/ubuntu/cognito_alb_ec2/tests/playwright/tests/settings.spec.js:56:35
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/settings-Settings-Page-Tes-1c7c4-play-9-password-reset-steps-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/settings-Settings-Page-Tes-1c7c4-play-9-password-reset-steps-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/settings-Settings-Page-Tes-1c7c4-play-9-password-reset-steps-chromium/error-context.md
+
+  6) [chromium] › tests/settings.spec.js:79:3 › Settings Page Tests › should have password reset instructions with key details 
+
+    Error: [2mexpect([22m[31mreceived[39m[2m).[22mtoBeGreaterThanOrEqual[2m([22m[32mexpected[39m[2m)[22m
+
+    Expected: >= [32m5[39m
+    Received:    [31m0[39m
+
+      103 |
+      104 |     // Should have most of the key elements
+    > 105 |     expect(foundCount).toBeGreaterThanOrEqual(5);
+          |                        ^
+      106 |
+      107 |     console.log('✅ Password reset instructions contain key details');
+      108 |   });
+        at /home/ubuntu/cognito_alb_ec2/tests/playwright/tests/settings.spec.js:105:24
+
+    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────
+    test-results/settings-Settings-Page-Tes-b72c5-structions-with-key-details-chromium/test-failed-1.png
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    attachment #2: video (video/webm) ──────────────────────────────────────────────────────────────
+    test-results/settings-Settings-Page-Tes-b72c5-structions-with-key-details-chromium/video.webm
+    ────────────────────────────────────────────────────────────────────────────────────────────────
+
+    Error Context: test-results/settings-Settings-Page-Tes-b72c5-structions-with-key-details-chromium/error-context.md
+
+  6 failed
+    [chromium] › tests/mfa.spec.js:47:3 › MFA Setup Flow Tests › should show MFA setup steps ───────
+    [chromium] › tests/mfa.spec.js:289:3 › MFA Setup Flow Tests › should test complete MFA setup flow structure 
+    [chromium] › tests/settings.spec.js:11:3 › Settings Page Tests › should display correct email address (not UUID) 
+    [chromium] › tests/settings.spec.js:33:3 › Settings Page Tests › should display only authenticator app MFA option (no SMS) 
+    [chromium] › tests/settings.spec.js:51:3 › Settings Page Tests › should display 9 password reset steps 
+    [chromium] › tests/settings.spec.js:79:3 › Settings Page Tests › should have password reset instructions with key details 
+  36 passed (2.0m)

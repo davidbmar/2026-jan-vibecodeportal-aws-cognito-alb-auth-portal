@@ -14,9 +14,9 @@ provider "aws" {
 
 # Hardcoded values to avoid needing DescribeAvailabilityZones and DescribeImages permissions
 locals {
-  availability_zones = ["us-east-1a", "us-east-1b"]
-  # Ubuntu 22.04 LTS AMI for us-east-1 (update periodically)
-  ubuntu_ami = "ami-0c7217cdde317cfec"
+  availability_zones = ["us-west-2a", "us-west-2b"]
+  # Ubuntu 22.04 LTS AMI for us-west-2 (update periodically)
+  ubuntu_ami = "ami-0aff18ec83b712f05"
   domain_name = "capsule-playground.com"
   subdomain = "portal.${local.domain_name}"
 }
@@ -162,6 +162,14 @@ resource "aws_security_group" "ec2" {
     description     = "Allow traffic from ALB only"
   }
 
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["44.244.76.51/32"]
+    description = "SSH access for debugging"
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -191,19 +199,19 @@ resource "aws_cognito_user_pool" "main" {
     temporary_password_validity_days = 7
   }
 
-  mfa_configuration = "OPTIONAL"  # Users can choose TOTP or SMS
+  mfa_configuration = "OPTIONAL"  # Users can choose TOTP
 
   software_token_mfa_configuration {
     enabled = true
   }
 
-  # SMS MFA Configuration
-  sms_configuration {
-    external_id    = "${var.project_name}-external"
-    sns_caller_arn = aws_iam_role.cognito_sms_role.arn
-  }
+  # SMS MFA Configuration - Commented out due to iam:PassRole permissions
+  # sms_configuration {
+  #   external_id    = "${var.project_name}-external"
+  #   sns_caller_arn = aws_iam_role.cognito_sms_role.arn
+  # }
 
-  sms_authentication_message = "Your Employee Portal authentication code is {####}"
+  # sms_authentication_message = "Your Employee Portal authentication code is {####}"
 
   account_recovery_setting {
     recovery_mechanism {
@@ -400,6 +408,61 @@ resource "aws_cognito_user_in_group" "sdedakia_product" {
   username     = aws_cognito_user.sdedakia.username
 }
 
+# Set permanent passwords for all users
+resource "null_resource" "set_user_passwords" {
+  depends_on = [
+    aws_cognito_user.dmar,
+    aws_cognito_user.jahn,
+    aws_cognito_user.ahatcher,
+    aws_cognito_user.peter,
+    aws_cognito_user.sdedakia
+  ]
+
+  triggers = {
+    user_pool_id = aws_cognito_user_pool.main.id
+    password     = "SecurePass123!"
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      aws cognito-idp admin-set-user-password \
+        --user-pool-id ${aws_cognito_user_pool.main.id} \
+        --username dmar@capsule.com \
+        --password 'SecurePass123!' \
+        --permanent \
+        --region ${var.aws_region}
+
+      aws cognito-idp admin-set-user-password \
+        --user-pool-id ${aws_cognito_user_pool.main.id} \
+        --username jahn@capsule.com \
+        --password 'SecurePass123!' \
+        --permanent \
+        --region ${var.aws_region}
+
+      aws cognito-idp admin-set-user-password \
+        --user-pool-id ${aws_cognito_user_pool.main.id} \
+        --username ahatcher@capsule.com \
+        --password 'SecurePass123!' \
+        --permanent \
+        --region ${var.aws_region}
+
+      aws cognito-idp admin-set-user-password \
+        --user-pool-id ${aws_cognito_user_pool.main.id} \
+        --username peter@capsule.com \
+        --password 'SecurePass123!' \
+        --permanent \
+        --region ${var.aws_region}
+
+      aws cognito-idp admin-set-user-password \
+        --user-pool-id ${aws_cognito_user_pool.main.id} \
+        --username sdedakia@capsule.com \
+        --password 'SecurePass123!' \
+        --permanent \
+        --region ${var.aws_region}
+    EOT
+  }
+}
+
 # IAM Role for EC2
 resource "aws_iam_role" "ec2" {
   name = "${var.project_name}-ec2-role"
@@ -444,6 +507,17 @@ resource "aws_iam_role_policy" "ec2_cognito" {
           "cognito-idp:AdminSetUserPassword"
         ]
         Resource = aws_cognito_user_pool.main.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:DescribeInstances",
+          "ec2:DescribeTags",
+          "ec2:CreateTags",
+          "ec2:DescribeInstanceStatus",
+          "ec2:DescribeSecurityGroups"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -577,6 +651,70 @@ resource "aws_lb_listener_rule" "logged_out" {
   }
 }
 
+resource "aws_lb_listener_rule" "password_reset" {
+  listener_arn = aws_lb_listener.main.arn
+  priority     = 3
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.main.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/password-reset"]
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "password_reset_success" {
+  listener_arn = aws_lb_listener.main.arn
+  priority     = 4
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.main.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/password-reset-success"]
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "password_reset_api" {
+  listener_arn = aws_lb_listener.main.arn
+  priority     = 5
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.main.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/api/password-reset/*"]
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "logout_and_reset" {
+  listener_arn = aws_lb_listener.main.arn
+  priority     = 6
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.main.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/logout-and-reset"]
+    }
+  }
+}
+
 resource "aws_lb_listener_rule" "authenticated" {
   listener_arn = aws_lb_listener.main.arn
   priority     = 10
@@ -606,26 +744,29 @@ resource "aws_lb_listener_rule" "authenticated" {
   }
 }
 
-# EC2 Instance
-resource "aws_instance" "app" {
-  ami                    = local.ubuntu_ami
-  instance_type          = "t3.micro"
-  subnet_id              = aws_subnet.public[0].id
-  vpc_security_group_ids = [aws_security_group.ec2.id]
-  iam_instance_profile   = aws_iam_instance_profile.ec2.name
+# EC2 Instance - COMMENTED OUT - Using portal-instance.tf instead
+# The old user_data.sh approach exceeded AWS 16KB limit
+# resource "aws_instance" "app" {
+#   ami                    = local.ubuntu_ami
+#   instance_type          = "t3.micro"
+#   subnet_id              = aws_subnet.public[0].id
+#   vpc_security_group_ids = [aws_security_group.ec2.id]
+#   iam_instance_profile   = aws_iam_instance_profile.ec2.name
+#
+#   user_data = base64gzip(templatefile("${path.module}/user_data.sh", {
+#     user_pool_id = aws_cognito_user_pool.main.id
+#     aws_region   = var.aws_region
+#   }))
+#
+#   tags = {
+#     Name = "${var.project_name}-app"
+#   }
+# }
+#
+# resource "aws_lb_target_group_attachment" "app" {
+#   target_group_arn = aws_lb_target_group.main.arn
+#   target_id        = aws_instance.app.id
+#   port             = 8000
+# }
 
-  user_data = base64gzip(templatefile("${path.module}/user_data.sh", {
-    user_pool_id = aws_cognito_user_pool.main.id
-    aws_region   = var.aws_region
-  }))
-
-  tags = {
-    Name = "${var.project_name}-app"
-  }
-}
-
-resource "aws_lb_target_group_attachment" "app" {
-  target_group_arn = aws_lb_target_group.main.arn
-  target_id        = aws_instance.app.id
-  port             = 8000
-}
+  # Temporary SSH access for debugging

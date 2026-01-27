@@ -1,0 +1,17 @@
+{
+  "name": "employee-portal-tests",
+  "version": "1.0.0",
+  "description": "Playwright tests for Employee Portal",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:settings": "playwright test tests/settings.spec.js",
+    "test:mfa": "playwright test tests/mfa.spec.js",
+    "test:password": "playwright test tests/password-reset.spec.js",
+    "test:journey": "playwright test tests/user-journey.spec.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0"
+  }
+}

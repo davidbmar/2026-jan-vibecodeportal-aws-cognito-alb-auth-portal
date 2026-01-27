@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logged Out - CAPSULE ACCESS MAINFRAME</title>
+    <link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Source Code Pro', monospace;
+            background: #000;
+            color: #00ff00;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+        }
+
+        .container {
+            max-width: 600px;
+            text-align: center;
+            border: 2px solid #00ff00;
+            padding: 3rem;
+            background: rgba(0, 255, 0, 0.05);
+        }
+
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 2rem;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: #00ff00;
+        }
+
+        p {
+            font-size: 1.1rem;
+            line-height: 1.8;
+            margin-bottom: 2rem;
+        }
+
+        .status {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        a {
+            display: inline-block;
+            margin-top: 1rem;
+            padding: 1rem 2rem;
+            background: rgba(0, 255, 0, 0.2);
+            border: 2px solid #00ff00;
+            color: #00ff00;
+            text-decoration: none;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 1px;
+            transition: all 0.3s ease;
+        }
+
+        a:hover {
+            background: rgba(0, 255, 0, 0.3);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 255, 0, 0.3);
+        }
+
+        .blink {
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+    </style>
+    <script>
+        function clearAllSessionData() {
+            // Clear all cookies aggressively
+            const cookiesToClear = [
+                'AWSELBAuthSessionCookie',
+                'AWSELBAuthSessionCookie-0',
+                'AWSELBAuthSessionCookie-1',
+                'AWSELBAuthSessionCookie-2'
+            ];
+
+            // Clear specific auth cookies
+            cookiesToClear.forEach(function(cookieName) {
+                document.cookie = cookieName + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;";
+                document.cookie = cookieName + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=.capsule-playground.com;";
+                document.cookie = cookieName + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=portal.capsule-playground.com;";
+                document.cookie = cookieName + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=.portal.capsule-playground.com;";
+            });
+
+            // Clear all other cookies
+            document.cookie.split(";").forEach(function(c) {
+                var eqPos = c.indexOf("=");
+                var name = eqPos > -1 ? c.substr(0, eqPos).trim() : c.trim();
+                if (name) {
+                    document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;";
+                    document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=.capsule-playground.com;";
+                    document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=portal.capsule-playground.com;";
+                }
+            });
+
+            // Clear storage
+            try { localStorage.clear(); } catch(e) {}
+            try { sessionStorage.clear(); } catch(e) {}
+        }
+
+        function clearAndReturn() {
+            clearAllSessionData();
+            // Force navigation to portal (ALB will require re-authentication)
+            window.location.replace("https://portal.capsule-playground.com");
+            return false;
+        }
+
+        // Auto-clear cookies on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            clearAllSessionData();
+            console.log('Session data cleared automatically');
+        });
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="status">✓</div>
+        <h1>// LOGOUT SUCCESSFUL //</h1>
+        <p>You have been successfully logged out of the CAPSULE ACCESS MAINFRAME.</p>
+        <p>All session data has been cleared.</p>
+        <p style="font-size: 0.9rem; opacity: 0.7;">Click below to log in again. You will be required to enter your credentials.</p>
+        <a href="#" onclick="return clearAndReturn();">← RETURN TO LOGIN</a>
+    </div>
+</body>
+</html>

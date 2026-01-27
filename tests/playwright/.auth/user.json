@@ -1,0 +1,89 @@
+{
+  "cookies": [
+    {
+      "name": "AWSALBAuthNonce",
+      "value": "QHJU0s513uqJwDDy",
+      "domain": "portal.capsule-playground.com",
+      "path": "/",
+      "expires": 1769472196.043342,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "csrf-state",
+      "value": "\"\"",
+      "domain": "employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com",
+      "path": "/",
+      "expires": 1769471596.056512,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "None"
+    },
+    {
+      "name": "csrf-state-legacy",
+      "value": "\"\"",
+      "domain": "employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com",
+      "path": "/",
+      "expires": 1769471596.056536,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "XSRF-TOKEN",
+      "value": "abc3a044-9292-475a-9ab6-53b7c7fb3c58",
+      "domain": "employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "cognito",
+      "value": "\"H4sIAAAAAAAAAAHZACb/l5RUUyS7M7Io2fqs7xUjJ2jNW3Ukxf1vTxTJynDuZq1vL3xEjt5s4bHtxus9UH0hEUS/U7S5QKwOtbymcyVSae1WvM+elyeCV3Oob8+3H23nYW9vql35nYGWPQgj1G5WRz5ugedMt235BNMSRzINJmLS9PQFNpfNPjc4P3Mi36O6Sw9ICfiNmh5DeVAaYn9t13Cg4h9PTAAUR0dwG2WstuXfMUoeuiClCupFVUOJRqIl30FpEI5ux4IS3UqfY+aXDSV3m1wmuFphTDnv45MifEYPo4xcj45uKvpB5uPZAAAA.H4sIAAAAAAAAAAEgAN//pBISy6/UDaVo5Ufvm46whWE/+5ofGfNNZI92lPOT3B+VdzmFIAAAAA==.3\"",
+      "domain": ".employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com",
+      "path": "/",
+      "expires": 1769474898.763416,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "AWSELBAuthSessionCookie-0",
+      "value": "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",
+      "domain": "portal.capsule-playground.com",
+      "path": "/",
+      "expires": 1770076099.305922,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "AWSELBAuthSessionCookie-1",
+      "value": "361t7mrmkckxQViG7+GwqQP6LRL4jrMp7YpdZk/ZLCNxAnHH47MF+G+AR223av6KAVukP0C7CalMmoLb2W0tJ4EQhz2qDk6NF/8NhPz5o2oPC0K7FRrfipESyETW3hUH3taH4zNvodxZdb1/qiThqJUQluVrCQwGkmGYesGJxVtEDW0IslPABlfSUzRkCNijfmCKBbfe5PVL9AYruH9Y1ccMij+tHoyKs2778oCL8JlCX24GMEFux0snYdqYa/TC1isGMx9BdFTRPxWrM4qTUJ6+0tWOX2xiE/mOJpaGiq5gxHGFDEmXddm68+GDlVWt6Ul5+Cpd+itpob+sJ61ddZZaXghKwb7oRnhaeIilpQYCxT7HfGLrq4xo9prp/L03ioT+h3DcPBy3Pi1RWM6HTaUg9WQjoLxcNYe53D5g8FypYsb8mHHcacrFR2we1xOms4CoFj91OxLCcRF+r4Epn28bpD/KNzLH4umy6kWaNQJX+VtWNNqDIMg9IS7D4U0Xxmhm9g+2MLeZWSecoTUInQetGKTlXLf80MQAHbN/Ds6v5J8e8a/UsqPl1Fju5yHH1J7Z3/DRynD4+sQ=",
+      "domain": "portal.capsule-playground.com",
+      "path": "/",
+      "expires": 1770076099.306048,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": [
+    {
+      "origin": "https://employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com",
+      "localStorage": [
+        {
+          "name": "amznfbgid",
+          "value": "X65-2528528-4124795:1769471297"
+        },
+        {
+          "name": "Amazon.AWS.Cognito.ContextData.LS_UBID",
+          "value": "3c9azytvit3cppxeytcu:1769471298264"
+        }
+      ]
+    }
+  ]
+}
