@@ -277,22 +277,21 @@ async def health():
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    """Display login page (no auth required)."""
+    """Display passwordless login page (no auth required)."""
     return templates.TemplateResponse("login.html", {
         "request": request,
-        "step": "password"
+        "step": "email"
     })
 
 @app.post("/login", response_class=HTMLResponse)
-async def login_submit(request: Request, email: str = Form(...), password: str = Form(...)):
-    """Handle login form submission - initiate custom auth."""
+async def login_submit(request: Request, email: str = Form(...)):
+    """Handle login form submission - initiate passwordless custom auth."""
     try:
         response = cognito_client.initiate_auth(
             AuthFlow='CUSTOM_AUTH',
             ClientId=CLIENT_ID,
             AuthParameters={
                 'USERNAME': email,
-                'PASSWORD': password,
                 'SECRET_HASH': get_secret_hash(email)
             }
         )
@@ -311,8 +310,8 @@ async def login_submit(request: Request, email: str = Form(...), password: str =
         print(f"Login error: {e}")
         return templates.TemplateResponse("login.html", {
             "request": request,
-            "step": "password",
-            "error": "Invalid email or password"
+            "step": "email",
+            "error": "Invalid email address or user not found"
         })
 
 @app.post("/verify-code", response_class=HTMLResponse)
@@ -1922,21 +1921,19 @@ cat > /opt/employee-portal/templates/login.html << 'EOFLOGIN'
         </div>
         {% endif %}
 
-        {% if step == 'password' %}
-        <h2>// AUTHENTICATION REQUIRED //</h2>
+        {% if step == 'email' %}
+        <h2>// PASSWORDLESS LOGIN //</h2>
+        <p style="margin: 1.5rem 0; line-height: 1.6; font-size: 0.95rem; opacity: 0.9;">
+            Enter your email address. You'll receive a verification code to complete login.
+        </p>
         <form method="POST" action="/login" style="margin-top: 2rem;">
-            <div style="margin-bottom: 1.5rem;">
+            <div style="margin-bottom: 2rem;">
                 <label style="display: block; margin-bottom: 0.5rem;">EMAIL:</label>
                 <input type="email" name="email" placeholder="user@capsule.com" required autofocus
                        style="width: 100%; padding: 0.75rem; background: #000; border: 2px solid #00ff00; color: #00ff00; font-family: 'Source Code Pro', monospace; font-size: 1rem;">
             </div>
-            <div style="margin-bottom: 2rem;">
-                <label style="display: block; margin-bottom: 0.5rem;">PASSWORD:</label>
-                <input type="password" name="password" placeholder="••••••••" required
-                       style="width: 100%; padding: 0.75rem; background: #000; border: 2px solid #00ff00; color: #00ff00; font-family: 'Source Code Pro', monospace; font-size: 1rem;">
-            </div>
             <button type="submit" style="width: 100%; padding: 1rem; background: rgba(0, 255, 0, 0.2); border: 2px solid #00ff00; color: #00ff00; font-family: 'Source Code Pro', monospace; font-size: 1rem; font-weight: 700; text-transform: uppercase; cursor: pointer; transition: all 0.3s;">
-                SIGN IN →
+                SEND CODE →
             </button>
         </form>
 
