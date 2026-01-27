@@ -199,14 +199,16 @@ resource "aws_cognito_user_pool" "main" {
     temporary_password_validity_days = 7
   }
 
-  mfa_configuration = "OFF" # Using custom challenge instead
+  mfa_configuration = "OFF"
 
-  # Lambda triggers for custom authentication flow
-  lambda_config {
-    define_auth_challenge          = aws_lambda_function.define_auth_challenge.arn
-    create_auth_challenge          = aws_lambda_function.create_auth_challenge.arn
-    verify_auth_challenge_response = aws_lambda_function.verify_auth_challenge.arn
-  }
+  # Lambda triggers DISABLED - incompatible with ALB + Hosted UI OAuth flow
+  # Custom challenges cannot be presented through Cognito Hosted UI
+  # See DEPLOYMENT-LESSONS-LEARNED.md for details
+  # lambda_config {
+  #   define_auth_challenge          = aws_lambda_function.define_auth_challenge.arn
+  #   create_auth_challenge          = aws_lambda_function.create_auth_challenge.arn
+  #   verify_auth_challenge_response = aws_lambda_function.verify_auth_challenge.arn
+  # }
 
   # SMS MFA Configuration - Commented out due to iam:PassRole permissions
   # sms_configuration {
@@ -270,9 +272,8 @@ resource "aws_cognito_user_pool_client" "main" {
   name         = "${var.project_name}-app-client"
   user_pool_id = aws_cognito_user_pool.main.id
 
-  # Enable custom authentication flow
+  # Standard authentication flows (custom auth disabled - see DEPLOYMENT-LESSONS-LEARNED.md)
   explicit_auth_flows = [
-    "ALLOW_CUSTOM_AUTH",
     "ALLOW_USER_SRP_AUTH",
     "ALLOW_REFRESH_TOKEN_AUTH"
   ]
