@@ -231,7 +231,7 @@ def build_ssm_url(instance_id: str) -> str:
 
 # User Management Functions
 def list_cognito_users() -> list:
-    """List all users from Cognito user pool with their groups."""
+    """List all users from Cognito user pool with their groups and last login."""
     try:
         users = []
         paginator = cognito_client.get_paginator('list_users')
@@ -243,12 +243,30 @@ def list_cognito_users() -> list:
                 # Get user's groups
                 groups = get_user_groups(user['Username'])
 
+                # Get last login from auth events
+                last_login = 'Never'
+                try:
+                    auth_events = cognito_client.admin_list_user_auth_events(
+                        UserPoolId=USER_POOL_ID,
+                        Username=user['Username'],
+                        MaxResults=1
+                    )
+                    if auth_events.get('AuthEvents'):
+                        event = auth_events['AuthEvents'][0]
+                        if event['EventType'] == 'SignIn' and event['EventResponse'] == 'Pass':
+                            last_login = event['CreationDate'].strftime('%Y-%m-%d %H:%M UTC')
+                except Exception as e:
+                    # If auth events not available, use UserLastModifiedDate
+                    if 'UserLastModifiedDate' in user:
+                        last_login = user['UserLastModifiedDate'].strftime('%Y-%m-%d %H:%M UTC')
+
                 users.append({
                     'username': user['Username'],
                     'email': email,
                     'status': user['UserStatus'],
                     'enabled': user['Enabled'],
-                    'groups': ', '.join(groups) if groups else 'none'
+                    'groups': ', '.join(groups) if groups else 'none',
+                    'last_login': last_login
                 })
 
         return users
@@ -298,6 +316,17 @@ def create_cognito_user(email: str, groups: list = None) -> tuple:
         return True, f"User {email} created successfully. Temporary password sent to email."
     except Exception as e:
         return False, f"Error creating user: {str(e)}"
+
+def delete_cognito_user(email: str) -> tuple:
+    """Delete a user from Cognito. Returns (success: bool, message: str)."""
+    try:
+        cognito_client.admin_delete_user(
+            UserPoolId=USER_POOL_ID,
+            Username=email
+        )
+        return True, f"User {email} deleted successfully."
+    except Exception as e:
+        return False, f"Error deleting user: {str(e)}"
 
 def validate_token(token: str) -> dict:
     """Validate JWT token from cookie."""
@@ -1043,6 +1072,31 @@ async def create_user_api(request: Request):
             return {"success": False, "message": "Invalid email format"}
 
         success, message = create_cognito_user(user_email, user_groups)
+        return {"success": success, "message": message}
+    except Exception as e:
+        return {"success": False, "message": f"Error: {str(e)}"}
+
+@app.post("/api/users/delete")
+async def delete_user_api(request: Request):
+    """API endpoint to delete a Cognito user (admin only)."""
+    email, groups = require_auth(request)
+
+    # Check if user is admin
+    if 'admins' not in groups:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        data = await request.json()
+        user_email = data.get("email")
+
+        if not user_email:
+            return {"success": False, "message": "Missing email"}
+
+        # Prevent self-deletion
+        if user_email == email:
+            return {"success": False, "message": "Cannot delete your own account"}
+
+        success, message = delete_cognito_user(user_email)
         return {"success": success, "message": message}
     except Exception as e:
         return {"success": False, "message": f"Error: {str(e)}"}
@@ -1803,20 +1857,29 @@ cat > /opt/employee-portal/templates/directory.html << 'EOFDIRECTORY'
         <thead>
             <tr>
                 <th>Email</th>
-                <th>Status</th>
+                <th>Last Login</th>
                 <th>Groups</th>
+                {% if is_admin %}
+                <th>Actions</th>
+                {% endif %}
             </tr>
         </thead>
         <tbody>
             {% for user in users %}
             <tr>
                 <td>{{ user.email }}</td>
-                <td>
-                    <span style="{% if user.status == 'CONFIRMED' %}color: #00ff00;{% elif user.status == 'FORCE_CHANGE_PASSWORD' %}color: #ffaa00;{% else %}color: #ff0000;{% endif %}">
-                        {{ user.status }}
-                    </span>
+                <td style="color: {% if user.last_login == 'Never' %}#ffaa00{% else %}#00ff00{% endif %};">
+                    {{ user.last_login }}
                 </td>
                 <td>{{ user.groups }}</td>
+                {% if is_admin %}
+                <td>
+                    <button onclick="confirmDelete('{{ user.email }}')"
+                            style="background: rgba(255, 0, 0, 0.2); border: 1px solid #ff0000; color: #ff0000; padding: 0.4rem 0.8rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-size: 0.85rem; text-transform: uppercase;">
+                        DELETE
+                    </button>
+                </td>
+                {% endif %}
             </tr>
             {% endfor %}
         </tbody>
@@ -1941,6 +2004,39 @@ document.addEventListener('keydown', (e) => {
         closeAddUserModal();
     }
 });
+
+// Delete user functionality
+function confirmDelete(email) {
+    if (confirm(`Are you sure you want to delete user: ${email}?\n\nThis action cannot be undone.`)) {
+        deleteUser(email);
+    }
+}
+
+async function deleteUser(email) {
+    try {
+        const response = await fetch('/api/users/delete', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                email: email
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showStatus(data.message, 'success');
+            // Reload page to show updated user list
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            showStatus(data.message, 'error');
+        }
+    } catch (error) {
+        showStatus('Error deleting user: ' + error.message, 'error');
+    }
+}
 </script>
 {% endif %}
 
