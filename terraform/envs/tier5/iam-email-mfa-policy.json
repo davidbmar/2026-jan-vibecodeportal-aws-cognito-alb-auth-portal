@@ -1,0 +1,113 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DynamoDBMFATables",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:CreateTable",
+        "dynamodb:DescribeTable",
+        "dynamodb:UpdateTable",
+        "dynamodb:DeleteTable",
+        "dynamodb:TagResource",
+        "dynamodb:UntagResource",
+        "dynamodb:UpdateTimeToLive",
+        "dynamodb:DescribeTimeToLive",
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Scan"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-west-2:821850226835:table/employee-portal-mfa-codes"
+      ]
+    },
+    {
+      "Sid": "SESEmailIdentity",
+      "Effect": "Allow",
+      "Action": [
+        "ses:VerifyEmailIdentity",
+        "ses:DeleteIdentity",
+        "ses:GetIdentityVerificationAttributes",
+        "ses:SendEmail",
+        "ses:SendRawEmail",
+        "ses:GetSendQuota",
+        "ses:GetSendStatistics"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "LambdaMFAFunctions",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:CreateFunction",
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+        "lambda:UpdateFunctionCode",
+        "lambda:UpdateFunctionConfiguration",
+        "lambda:DeleteFunction",
+        "lambda:ListFunctions",
+        "lambda:TagResource",
+        "lambda:UntagResource",
+        "lambda:AddPermission",
+        "lambda:RemovePermission",
+        "lambda:GetPolicy",
+        "lambda:InvokeFunction"
+      ],
+      "Resource": [
+        "arn:aws:lambda:us-west-2:821850226835:function:employee-portal-*auth-challenge"
+      ]
+    },
+    {
+      "Sid": "LambdaList",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:ListFunctions"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "IAMMFALambdaRole",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:GetRole",
+        "iam:DeleteRole",
+        "iam:PutRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:TagRole",
+        "iam:UntagRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::821850226835:role/employee-portal-mfa-lambda-role"
+      ]
+    },
+    {
+      "Sid": "IAMPassRoleToLambda",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::821850226835:role/employee-portal-mfa-lambda-role",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "lambda.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "CloudWatchLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:DescribeLogGroups",
+        "logs:DeleteLogGroup",
+        "logs:TagLogGroup",
+        "logs:UntagLogGroup"
+      ],
+      "Resource": [
+        "arn:aws:logs:us-west-2:821850226835:log-group:/aws/lambda/employee-portal-*"
+      ]
+    }
+  ]
+}
