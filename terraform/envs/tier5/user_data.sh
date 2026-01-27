@@ -277,7 +277,13 @@ def list_cognito_users() -> list:
 def create_cognito_user(email: str, groups: list = None) -> tuple:
     """Create a new user in Cognito and optionally add to groups. Returns (success: bool, message: str)."""
     try:
-        # Create user with email
+        # Generate a temporary password (user will be prompted to change on first login)
+        import secrets
+        import string
+        temp_password = ''.join(secrets.choice(string.ascii_letters + string.digits + '!@#$%') for _ in range(12))
+        temp_password = temp_password[:10] + 'Aa1!' + temp_password[10:]  # Ensure complexity
+
+        # Create user with email - SUPPRESS email to prevent temporary password notification
         cognito_client.admin_create_user(
             UserPoolId=USER_POOL_ID,
             Username=email,
@@ -285,20 +291,8 @@ def create_cognito_user(email: str, groups: list = None) -> tuple:
                 {'Name': 'email', 'Value': email},
                 {'Name': 'email_verified', 'Value': 'true'}
             ],
-            DesiredDeliveryMediums=['EMAIL']
-        )
-
-        # Set a temporary password (user will be prompted to change on first login)
-        import secrets
-        import string
-        temp_password = ''.join(secrets.choice(string.ascii_letters + string.digits + '!@#$%') for _ in range(12))
-        temp_password = temp_password[:10] + 'Aa1!' + temp_password[10:]  # Ensure complexity
-
-        cognito_client.admin_set_user_password(
-            UserPoolId=USER_POOL_ID,
-            Username=email,
-            Password=temp_password,
-            Permanent=False  # User must change on first login
+            TemporaryPassword=temp_password,
+            MessageAction='SUPPRESS'  # Don't send email - this is passwordless auth with email MFA
         )
 
         # Add user to groups if specified
@@ -313,7 +307,7 @@ def create_cognito_user(email: str, groups: list = None) -> tuple:
                 except Exception as e:
                     print(f"Error adding user to group {group}: {e}")
 
-        return True, f"User {email} created successfully. Temporary password sent to email."
+        return True, f"User {email} created successfully. User can sign in with passwordless email verification."
     except Exception as e:
         return False, f"Error creating user: {str(e)}"
 
