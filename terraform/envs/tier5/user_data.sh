@@ -17,10 +17,10 @@ python3 -m venv venv
 source venv/bin/activate
 
 # Install dependencies
-pip install fastapi uvicorn[standard] python-jose[cryptography] boto3 jinja2 python-multipart pyotp qrcode[pil]
+pip install fastapi uvicorn[standard] python-jose[cryptography] boto3 jinja2 python-multipart
 
 # Create app.py
-cat > /opt/employee-portal/app.py << 'EOFAPP'
+cat > /opt/employee-portal/app.py << EOFAPP
 import os
 import json
 import base64
@@ -32,8 +32,6 @@ from typing import Optional
 from datetime import datetime, timedelta
 import io
 import boto3
-import pyotp
-import qrcode
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -67,7 +65,7 @@ CACHE_TTL = 60  # seconds
 
 # In-memory storage for MFA secrets (in production, use database)
 # Format: {email: {"secret": "...", "verified": False}}
-mfa_secrets = {}
+# mfa_secrets = {} # TOTP MFA - replaced with email MFA via Cognito
 
 # Hardcoded user registry for directory page
 USER_REGISTRY = [
@@ -473,105 +471,105 @@ async def mfa_setup_page(request: Request):
         "groups": groups
     })
 
-@app.get("/api/mfa/init")
-async def initialize_mfa(request: Request):
-    """Initialize MFA setup - generate TOTP secret and QR code."""
-    email, groups = require_auth(request)
-
-    # Generate a new TOTP secret
-    secret = pyotp.random_base32()
-
-    # Store the secret temporarily (not verified yet)
-    mfa_secrets[email] = {
-        "secret": secret,
-        "verified": False
-    }
-
-    # Create TOTP URI for QR code
-    totp = pyotp.TOTP(secret)
-    provisioning_uri = totp.provisioning_uri(
-        name=email,
-        issuer_name="CAPSULE Portal"
-    )
-
-    # Generate QR code as base64 image
-    qr = qrcode.QRCode(version=1, box_size=10, border=5)
-    qr.add_data(provisioning_uri)
-    qr.make(fit=True)
-
-    img = qr.make_image(fill_color="black", back_color="white")
-
-    # Convert to base64
-    buffer = io.BytesIO()
-    img.save(buffer, format='PNG')
-    buffer.seek(0)
-    qr_base64 = base64.b64encode(buffer.getvalue()).decode()
-
-    return JSONResponse({
-        "success": True,
-        "secret": secret,
-        "qr_code": f"data:image/png;base64,{qr_base64}",
-        "provisioning_uri": provisioning_uri
-    })
-
-@app.post("/api/mfa/verify")
-async def verify_mfa_code(request: Request):
-    """Verify the TOTP code entered by the user."""
-    email, groups = require_auth(request)
-
-    # Get the verification code from request body
-    try:
-        body = await request.json()
-        code = body.get("code", "").strip()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid request body")
-
-    if not code or len(code) != 6:
-        return JSONResponse({
-            "success": False,
-            "error": "Please enter a 6-digit code"
-        }, status_code=400)
-
-    # Check if user has initiated MFA setup
-    if email not in mfa_secrets:
-        return JSONResponse({
-            "success": False,
-            "error": "MFA setup not initialized. Please refresh and try again."
-        }, status_code=400)
-
-    secret = mfa_secrets[email]["secret"]
-
-    # Verify the code
-    totp = pyotp.TOTP(secret)
-    is_valid = totp.verify(code, valid_window=1)  # Allow 1 time step window
-
-    if is_valid:
-        # Mark as verified
-        mfa_secrets[email]["verified"] = True
-
-        return JSONResponse({
-            "success": True,
-            "message": "MFA successfully configured!"
-        })
-    else:
-        return JSONResponse({
-            "success": False,
-            "error": "Invalid code. Please check your authenticator app and try again."
-        }, status_code=400)
-
-@app.get("/api/mfa/status")
-async def get_mfa_status(request: Request):
-    """Check if user has MFA configured."""
-    email, groups = require_auth(request)
-
-    # Check if user has verified MFA
-    has_mfa = email in mfa_secrets and mfa_secrets[email].get("verified", False)
-
-    return JSONResponse({
-        "email": email,
-        "mfa_enabled": has_mfa
-    })
-
+# @app.get("/api/mfa/init")
+# async def initialize_mfa(request: Request):
+#     """Initialize MFA setup - generate TOTP secret and QR code."""
+#     email, groups = require_auth(request)
+# 
+#     # Generate a new TOTP secret
+#     secret = pyotp.random_base32()
+# 
+#     # Store the secret temporarily (not verified yet)
+#     mfa_secrets[email] = {
+#         "secret": secret,
+#         "verified": False
+#     }
+# 
+#     # Create TOTP URI for QR code
+#     totp = pyotp.TOTP(secret)
+#     provisioning_uri = totp.provisioning_uri(
+#         name=email,
+#         issuer_name="CAPSULE Portal"
+#     )
+# 
+#     # Generate QR code as base64 image
+#     qr = qrcode.QRCode(version=1, box_size=10, border=5)
+#     qr.add_data(provisioning_uri)
+#     qr.make(fit=True)
+# 
+#     img = qr.make_image(fill_color="black", back_color="white")
+# 
+#     # Convert to base64
+#     buffer = io.BytesIO()
+#     img.save(buffer, format='PNG')
+#     buffer.seek(0)
+#     qr_base64 = base64.b64encode(buffer.getvalue()).decode()
+# 
+#     return JSONResponse({
+#         "success": True,
+#         "secret": secret,
+#         "qr_code": f"data:image/png;base64,{qr_base64}",
+#         "provisioning_uri": provisioning_uri
+#     })
+# 
+# @app.post("/api/mfa/verify")
+# async def verify_mfa_code(request: Request):
+#     """Verify the TOTP code entered by the user."""
+#     email, groups = require_auth(request)
+# 
+#     # Get the verification code from request body
+#     try:
+#         body = await request.json()
+#         code = body.get("code", "").strip()
+#     except Exception:
+#         raise HTTPException(status_code=400, detail="Invalid request body")
+# 
+#     if not code or len(code) != 6:
+#         return JSONResponse({
+#             "success": False,
+#             "error": "Please enter a 6-digit code"
+#         }, status_code=400)
+# 
+#     # Check if user has initiated MFA setup
+#     if email not in mfa_secrets:
+#         return JSONResponse({
+#             "success": False,
+#             "error": "MFA setup not initialized. Please refresh and try again."
+#         }, status_code=400)
+# 
+#     secret = mfa_secrets[email]["secret"]
+# 
+#     # Verify the code
+#     totp = pyotp.TOTP(secret)
+#     is_valid = totp.verify(code, valid_window=1)  # Allow 1 time step window
+# 
+#     if is_valid:
+#         # Mark as verified
+#         mfa_secrets[email]["verified"] = True
+# 
+#         return JSONResponse({
+#             "success": True,
+#             "message": "MFA successfully configured!"
+#         })
+#     else:
+#         return JSONResponse({
+#             "success": False,
+#             "error": "Invalid code. Please check your authenticator app and try again."
+#         }, status_code=400)
+# 
+# @app.get("/api/mfa/status")
+# async def get_mfa_status(request: Request):
+#     """Check if user has MFA configured."""
+#     email, groups = require_auth(request)
+# 
+#     # Check if user has verified MFA
+#     has_mfa = email in mfa_secrets and mfa_secrets[email].get("verified", False)
+# 
+#     return JSONResponse({
+#         "email": email,
+#         "mfa_enabled": has_mfa
+#     })
+# 
 @app.get("/password-reset-info", response_class=HTMLResponse)
 async def password_reset_info(request: Request):
     """Show information about resetting password."""
@@ -781,12 +779,8 @@ async def delete_user(request: Request):
 # EC2 Resources Management Routes
 @app.get("/ec2-resources", response_class=HTMLResponse)
 async def ec2_resources_page(request: Request):
-    """EC2 Resources management page (admin only)."""
+    """EC2 Resources management page (available to all authenticated users)."""
     email, groups = require_auth(request)
-
-    # Check if user is admin
-    if 'admins' not in groups:
-        return RedirectResponse(url="/denied", status_code=303)
 
     return templates.TemplateResponse("ec2_resources.html", {
         "request": request,
@@ -796,12 +790,8 @@ async def ec2_resources_page(request: Request):
 
 @app.get("/api/ec2/instances")
 async def get_ec2_instances_api(request: Request):
-    """API endpoint to get EC2 instances with VibeCodeArea tag (admin only)."""
+    """API endpoint to get EC2 instances with VibeCodeArea tag (available to all authenticated users)."""
     email, groups = require_auth(request)
-
-    # Check if user is admin
-    if 'admins' not in groups:
-        raise HTTPException(status_code=403, detail="Admin access required")
 
     instances = get_instances_by_tag()
     return {"instances": instances}
@@ -1454,9 +1444,7 @@ cat > /opt/employee-portal/templates/base.html << 'EOFBASE'
     <nav>
         <a href="/">Home</a>
         <a href="/directory">Directory</a>
-        {% if groups and 'admins' in groups %}
         <a href="/ec2-resources">EC2 Resources</a>
-        {% endif %}
         <a href="/areas/engineering">Engineering</a>
         <a href="/areas/hr">HR</a>
         <a href="/areas/automation">Automation</a>
