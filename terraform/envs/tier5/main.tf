@@ -201,14 +201,12 @@ resource "aws_cognito_user_pool" "main" {
 
   mfa_configuration = "OFF"
 
-  # Lambda triggers DISABLED - incompatible with ALB + Hosted UI OAuth flow
-  # Custom challenges cannot be presented through Cognito Hosted UI
-  # See DEPLOYMENT-LESSONS-LEARNED.md for details
-  # lambda_config {
-  #   define_auth_challenge          = aws_lambda_function.define_auth_challenge.arn
-  #   create_auth_challenge          = aws_lambda_function.create_auth_challenge.arn
-  #   verify_auth_challenge_response = aws_lambda_function.verify_auth_challenge.arn
-  # }
+  # Lambda triggers for email MFA
+  lambda_config {
+    define_auth_challenge          = aws_lambda_function.define_auth_challenge.arn
+    create_auth_challenge          = aws_lambda_function.create_auth_challenge.arn
+    verify_auth_challenge_response = aws_lambda_function.verify_auth_challenge.arn
+  }
 
   # SMS MFA Configuration - Commented out due to iam:PassRole permissions
   # sms_configuration {
@@ -272,8 +270,9 @@ resource "aws_cognito_user_pool_client" "main" {
   name         = "${var.project_name}-app-client"
   user_pool_id = aws_cognito_user_pool.main.id
 
-  # Standard authentication flows (custom auth disabled - see DEPLOYMENT-LESSONS-LEARNED.md)
+  # Authentication flows including custom auth for email MFA
   explicit_auth_flows = [
+    "ALLOW_CUSTOM_AUTH",
     "ALLOW_USER_SRP_AUTH",
     "ALLOW_REFRESH_TOKEN_AUTH"
   ]
@@ -603,26 +602,13 @@ resource "aws_lb_listener" "http" {
   }
 }
 
-# HTTPS Listener - Main with Cognito Auth
+# HTTPS Listener - Forward to app (auth handled by app)
 resource "aws_lb_listener" "main" {
   load_balancer_arn = aws_lb.main.arn
   port              = "443"
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
   certificate_arn   = aws_acm_certificate_validation.main.certificate_arn
-
-  default_action {
-    type = "authenticate-cognito"
-
-    authenticate_cognito {
-      user_pool_arn              = aws_cognito_user_pool.main.arn
-      user_pool_client_id        = aws_cognito_user_pool_client.main.id
-      user_pool_domain           = aws_cognito_user_pool_domain.main.domain
-      session_cookie_name        = "AWSELBAuthSessionCookie"
-      session_timeout            = 3600
-      on_unauthenticated_request = "authenticate"
-    }
-  }
 
   default_action {
     type             = "forward"
@@ -729,19 +715,6 @@ resource "aws_lb_listener_rule" "logout_and_reset" {
 resource "aws_lb_listener_rule" "authenticated" {
   listener_arn = aws_lb_listener.main.arn
   priority     = 10
-
-  action {
-    type = "authenticate-cognito"
-
-    authenticate_cognito {
-      user_pool_arn              = aws_cognito_user_pool.main.arn
-      user_pool_client_id        = aws_cognito_user_pool_client.main.id
-      user_pool_domain           = aws_cognito_user_pool_domain.main.domain
-      session_cookie_name        = "AWSELBAuthSessionCookie"
-      session_timeout            = 3600
-      on_unauthenticated_request = "authenticate"
-    }
-  }
 
   action {
     type             = "forward"

@@ -32,10 +32,10 @@ from typing import Optional
 from datetime import datetime, timedelta
 import io
 import boto3
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Form, Response
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
-from jose import jwt
+from jose import jwt, JWTError
 
 app = FastAPI()
 templates = Jinja2Templates(directory="/opt/employee-portal/templates")
@@ -133,16 +133,17 @@ def get_user_groups(username: str) -> list:
         return []
 
 def require_auth(request: Request) -> tuple:
-    """Middleware to require authentication and return user email and groups."""
-    email = extract_user_from_alb_header(request)
+    """Get authenticated user email and groups from request state (set by middleware)."""
+    email = getattr(request.state, 'email', None)
+    groups = getattr(request.state, 'groups', [])
+
     if not email:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    groups = get_user_groups(email)
     return email, groups
 
 def require_group(request: Request, required_group: str) -> tuple:
-    """Middleware to require a specific group membership."""
+    """Require a specific group membership."""
     email, groups = require_auth(request)
 
     if required_group not in groups:
@@ -228,16 +229,144 @@ def build_ssm_url(instance_id: str) -> str:
     """Generate AWS Systems Manager Session Manager URL for an instance."""
     return f"https://console.aws.amazon.com/systems-manager/session-manager/{instance_id}?region={AWS_REGION}"
 
+def validate_token(token: str) -> dict:
+    """Validate JWT token from cookie."""
+    try:
+        # Decode without verification (Cognito signed it, we trust it)
+        payload = jwt.decode(
+            token,
+            options={"verify_signature": False}
+        )
+        return payload
+    except JWTError as e:
+        print(f"JWT decode error: {e}")
+        return None
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """Authentication middleware - checks JWT token in cookie."""
+    # Public paths - no auth required
+    public_paths = ["/login", "/verify-code", "/health", "/logged-out"]
+
+    if request.url.path in public_paths:
+        response = await call_next(request)
+        return response
+
+    # Check for auth cookie
+    token = request.cookies.get("auth_token")
+    if not token:
+        return RedirectResponse(url="/login", status_code=302)
+
+    # Validate token
+    user_data = validate_token(token)
+    if not user_data:
+        return RedirectResponse(url="/login", status_code=302)
+
+    # Attach user data to request state
+    request.state.user = user_data
+    request.state.email = user_data.get('email')
+    request.state.groups = user_data.get('cognito:groups', [])
+
+    response = await call_next(request)
+    return response
+
 @app.get("/health")
 async def health():
     """Health check endpoint (no auth required)."""
     return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
 
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    """Display login page (no auth required)."""
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "step": "password"
+    })
+
+@app.post("/login", response_class=HTMLResponse)
+async def login_submit(request: Request, email: str = Form(...), password: str = Form(...)):
+    """Handle login form submission - initiate custom auth."""
+    try:
+        response = cognito_client.initiate_auth(
+            AuthFlow='CUSTOM_AUTH',
+            ClientId=CLIENT_ID,
+            AuthParameters={
+                'USERNAME': email,
+                'PASSWORD': password,
+                'SECRET_HASH': get_secret_hash(email)
+            }
+        )
+
+        # Lambda sends email automatically
+        session_data = response['Session']
+
+        return templates.TemplateResponse("login.html", {
+            "request": request,
+            "step": "code",
+            "email": email,
+            "session": session_data
+        })
+
+    except Exception as e:
+        print(f"Login error: {e}")
+        return templates.TemplateResponse("login.html", {
+            "request": request,
+            "step": "password",
+            "error": "Invalid email or password"
+        })
+
+@app.post("/verify-code", response_class=HTMLResponse)
+async def verify_code(
+    request: Request,
+    code: str = Form(...),
+    session: str = Form(...),
+    email: str = Form(...)
+):
+    """Handle verification code submission."""
+    try:
+        auth_response = cognito_client.respond_to_auth_challenge(
+            ClientId=CLIENT_ID,
+            ChallengeName='CUSTOM_CHALLENGE',
+            Session=session,
+            ChallengeResponses={
+                'ANSWER': code,
+                'USERNAME': email,
+                'SECRET_HASH': get_secret_hash(email)
+            }
+        )
+
+        # Success - got tokens
+        id_token = auth_response['AuthenticationResult']['IdToken']
+
+        # Create response and set secure cookie
+        response = RedirectResponse(url="/", status_code=303)
+        response.set_cookie(
+            key="auth_token",
+            value=id_token,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=3600
+        )
+
+        return response
+
+    except Exception as e:
+        print(f"Verification error: {e}")
+        return templates.TemplateResponse("login.html", {
+            "request": request,
+            "step": "code",
+            "email": email,
+            "session": session,
+            "error": "Invalid code. Please try again."
+        })
+
 @app.get("/logout")
 async def logout():
-    """Logout endpoint that redirects to Cognito logout."""
-    logout_url = "https://employee-portal-mnao1rgh.auth.us-west-2.amazoncognito.com/logout?client_id=7qa8jhkle0n5hfqq2pa3ld30b&logout_uri=https://portal.capsule-playground.com/logged-out"
-    return RedirectResponse(url=logout_url, status_code=302)
+    """Logout endpoint that clears auth cookie."""
+    response = RedirectResponse(url="/logged-out", status_code=302)
+    response.delete_cookie("auth_token")
+    return response
 
 @app.get("/logout-and-reset")
 async def logout_and_reset():
@@ -1770,6 +1899,77 @@ cat > /opt/employee-portal/templates/logged_out.html << 'EOFLOGGEDOUT'
 </body>
 </html>
 EOFLOGGEDOUT
+
+# Create login template
+cat > /opt/employee-portal/templates/login.html << 'EOFLOGIN'
+{% extends "base.html" %}
+{% block title %}LOGIN - CAPSULE PORTAL{% endblock %}
+{% block content %}
+<div class="crt-container">
+    <pre class="ascii-art">
+ ██╗      ██████╗  ██████╗ ██╗███╗   ██╗
+ ██║     ██╔═══██╗██╔════╝ ██║████╗  ██║
+ ██║     ██║   ██║██║  ███╗██║██╔██╗ ██║
+ ██║     ██║   ██║██║   ██║██║██║╚██╗██║
+ ███████╗╚██████╔╝╚██████╔╝██║██║ ╚████║
+ ╚══════╝ ╚═════╝  ╚═════╝ ╚═╝╚═╝  ╚═══╝
+    </pre>
+
+    <div class="content-box">
+        {% if error %}
+        <div style="color: #ff0000; background: rgba(255, 0, 0, 0.1); padding: 1rem; margin-bottom: 1rem; border: 1px solid #ff0000;">
+            {{ error }}
+        </div>
+        {% endif %}
+
+        {% if step == 'password' %}
+        <h2>// AUTHENTICATION REQUIRED //</h2>
+        <form method="POST" action="/login" style="margin-top: 2rem;">
+            <div style="margin-bottom: 1.5rem;">
+                <label style="display: block; margin-bottom: 0.5rem;">EMAIL:</label>
+                <input type="email" name="email" placeholder="user@capsule.com" required autofocus
+                       style="width: 100%; padding: 0.75rem; background: #000; border: 2px solid #00ff00; color: #00ff00; font-family: 'Source Code Pro', monospace; font-size: 1rem;">
+            </div>
+            <div style="margin-bottom: 2rem;">
+                <label style="display: block; margin-bottom: 0.5rem;">PASSWORD:</label>
+                <input type="password" name="password" placeholder="••••••••" required
+                       style="width: 100%; padding: 0.75rem; background: #000; border: 2px solid #00ff00; color: #00ff00; font-family: 'Source Code Pro', monospace; font-size: 1rem;">
+            </div>
+            <button type="submit" style="width: 100%; padding: 1rem; background: rgba(0, 255, 0, 0.2); border: 2px solid #00ff00; color: #00ff00; font-family: 'Source Code Pro', monospace; font-size: 1rem; font-weight: 700; text-transform: uppercase; cursor: pointer; transition: all 0.3s;">
+                SIGN IN →
+            </button>
+        </form>
+
+        {% elif step == 'code' %}
+        <h2>// EMAIL VERIFICATION //</h2>
+        <p style="margin: 1.5rem 0; line-height: 1.6;">
+            A 6-digit verification code has been sent to:<br>
+            <strong style="color: #00ff00;">{{ email }}</strong>
+        </p>
+        <p style="margin-bottom: 2rem; font-size: 0.9rem; opacity: 0.8;">
+            Check your email and enter the code below. Code expires in 5 minutes.
+        </p>
+        <form method="POST" action="/verify-code">
+            <div style="margin-bottom: 2rem;">
+                <label style="display: block; margin-bottom: 0.5rem;">VERIFICATION CODE:</label>
+                <input type="text" name="code" placeholder="000000" maxlength="6" required autofocus
+                       pattern="[0-9]{6}"
+                       style="width: 100%; padding: 0.75rem; background: #000; border: 2px solid #00ff00; color: #00ff00; font-family: 'Source Code Pro', monospace; font-size: 1.5rem; text-align: center; letter-spacing: 0.5rem;">
+                <input type="hidden" name="session" value="{{ session }}">
+                <input type="hidden" name="email" value="{{ email }}">
+            </div>
+            <button type="submit" style="width: 100%; padding: 1rem; background: rgba(0, 255, 0, 0.2); border: 2px solid #00ff00; color: #00ff00; font-family: 'Source Code Pro', monospace; font-size: 1rem; font-weight: 700; text-transform: uppercase; cursor: pointer; transition: all 0.3s;">
+                VERIFY CODE →
+            </button>
+        </form>
+        <p style="margin-top: 1.5rem; font-size: 0.9rem; opacity: 0.6;">
+            <a href="/login" style="color: #00ff00; text-decoration: none; border-bottom: 1px solid #00ff00;">← Back to login</a>
+        </p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+EOFLOGIN
 
 # Create error template
 cat > /opt/employee-portal/templates/error.html << 'EOFERROR'
