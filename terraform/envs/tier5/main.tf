@@ -16,9 +16,9 @@ provider "aws" {
 locals {
   availability_zones = ["us-west-2a", "us-west-2b"]
   # Ubuntu 22.04 LTS AMI for us-west-2 (update periodically)
-  ubuntu_ami = "ami-0aff18ec83b712f05"
+  ubuntu_ami  = "ami-0aff18ec83b712f05"
   domain_name = "capsule-playground.com"
-  subdomain = "portal.${local.domain_name}"
+  subdomain   = "portal.${local.domain_name}"
 }
 
 # VPC
@@ -199,7 +199,7 @@ resource "aws_cognito_user_pool" "main" {
     temporary_password_validity_days = 7
   }
 
-  mfa_configuration = "OFF"  # Using custom challenge instead
+  mfa_configuration = "OFF" # Using custom challenge instead
 
   # Lambda triggers for custom authentication flow
   lambda_config {
@@ -614,12 +614,12 @@ resource "aws_lb_listener" "main" {
     type = "authenticate-cognito"
 
     authenticate_cognito {
-      user_pool_arn               = aws_cognito_user_pool.main.arn
-      user_pool_client_id         = aws_cognito_user_pool_client.main.id
-      user_pool_domain            = aws_cognito_user_pool_domain.main.domain
-      session_cookie_name         = "AWSELBAuthSessionCookie"
-      session_timeout             = 3600
-      on_unauthenticated_request  = "authenticate"
+      user_pool_arn              = aws_cognito_user_pool.main.arn
+      user_pool_client_id        = aws_cognito_user_pool_client.main.id
+      user_pool_domain           = aws_cognito_user_pool_domain.main.domain
+      session_cookie_name        = "AWSELBAuthSessionCookie"
+      session_timeout            = 3600
+      on_unauthenticated_request = "authenticate"
     }
   }
 
@@ -733,12 +733,12 @@ resource "aws_lb_listener_rule" "authenticated" {
     type = "authenticate-cognito"
 
     authenticate_cognito {
-      user_pool_arn               = aws_cognito_user_pool.main.arn
-      user_pool_client_id         = aws_cognito_user_pool_client.main.id
-      user_pool_domain            = aws_cognito_user_pool_domain.main.domain
-      session_cookie_name         = "AWSELBAuthSessionCookie"
-      session_timeout             = 3600
-      on_unauthenticated_request  = "authenticate"
+      user_pool_arn              = aws_cognito_user_pool.main.arn
+      user_pool_client_id        = aws_cognito_user_pool_client.main.id
+      user_pool_domain           = aws_cognito_user_pool_domain.main.domain
+      session_cookie_name        = "AWSELBAuthSessionCookie"
+      session_timeout            = 3600
+      on_unauthenticated_request = "authenticate"
     }
   }
 
@@ -779,4 +779,4 @@ resource "aws_lb_listener_rule" "authenticated" {
 #   port             = 8000
 # }
 
-  # Temporary SSH access for debugging
+# Temporary SSH access for debugging

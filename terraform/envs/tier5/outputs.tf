@@ -49,7 +49,7 @@ output "example_urls" {
 
 output "user_password_commands" {
   description = "Commands to set initial passwords for users"
-  value = <<-EOT
+  value       = <<-EOT
     # Set passwords for users (replace YOUR_PASSWORD with actual password):
 
     aws cognito-idp admin-set-user-password \
