@@ -229,6 +229,76 @@ def build_ssm_url(instance_id: str) -> str:
     """Generate AWS Systems Manager Session Manager URL for an instance."""
     return f"https://console.aws.amazon.com/systems-manager/session-manager/{instance_id}?region={AWS_REGION}"
 
+# User Management Functions
+def list_cognito_users() -> list:
+    """List all users from Cognito user pool with their groups."""
+    try:
+        users = []
+        paginator = cognito_client.get_paginator('list_users')
+
+        for page in paginator.paginate(UserPoolId=USER_POOL_ID):
+            for user in page['Users']:
+                email = next((attr['Value'] for attr in user['Attributes'] if attr['Name'] == 'email'), 'N/A')
+
+                # Get user's groups
+                groups = get_user_groups(user['Username'])
+
+                users.append({
+                    'username': user['Username'],
+                    'email': email,
+                    'status': user['UserStatus'],
+                    'enabled': user['Enabled'],
+                    'groups': ', '.join(groups) if groups else 'none'
+                })
+
+        return users
+    except Exception as e:
+        print(f"Error listing Cognito users: {e}")
+        return []
+
+def create_cognito_user(email: str, groups: list = None) -> tuple:
+    """Create a new user in Cognito and optionally add to groups. Returns (success: bool, message: str)."""
+    try:
+        # Create user with email
+        cognito_client.admin_create_user(
+            UserPoolId=USER_POOL_ID,
+            Username=email,
+            UserAttributes=[
+                {'Name': 'email', 'Value': email},
+                {'Name': 'email_verified', 'Value': 'true'}
+            ],
+            DesiredDeliveryMediums=['EMAIL']
+        )
+
+        # Set a temporary password (user will be prompted to change on first login)
+        import secrets
+        import string
+        temp_password = ''.join(secrets.choice(string.ascii_letters + string.digits + '!@#$%') for _ in range(12))
+        temp_password = temp_password[:10] + 'Aa1!' + temp_password[10:]  # Ensure complexity
+
+        cognito_client.admin_set_user_password(
+            UserPoolId=USER_POOL_ID,
+            Username=email,
+            Password=temp_password,
+            Permanent=False  # User must change on first login
+        )
+
+        # Add user to groups if specified
+        if groups:
+            for group in groups:
+                try:
+                    cognito_client.admin_add_user_to_group(
+                        UserPoolId=USER_POOL_ID,
+                        Username=email,
+                        GroupName=group
+                    )
+                except Exception as e:
+                    print(f"Error adding user to group {group}: {e}")
+
+        return True, f"User {email} created successfully. Temporary password sent to email."
+    except Exception as e:
+        return False, f"Error creating user: {str(e)}"
+
 def validate_token(token: str) -> dict:
     """Validate JWT token from cookie."""
     try:
@@ -455,14 +525,18 @@ async def home(request: Request):
 
 @app.get("/directory", response_class=HTMLResponse)
 async def directory(request: Request):
-    """Directory page showing user registry."""
+    """Directory page showing all Cognito users."""
     email, groups = require_auth(request)
+
+    # Fetch users from Cognito
+    cognito_users = list_cognito_users()
 
     return templates.TemplateResponse("directory.html", {
         "request": request,
         "email": email,
         "groups": groups,
-        "users": USER_REGISTRY
+        "users": cognito_users,
+        "is_admin": 'admins' in groups
     })
 
 @app.get("/areas/engineering", response_class=HTMLResponse)
@@ -942,6 +1016,33 @@ async def tag_ec2_instance_api(request: Request):
             return {"success": False, "message": "Missing instance_id or area"}
 
         success, message = tag_instance(instance_id, area)
+        return {"success": success, "message": message}
+    except Exception as e:
+        return {"success": False, "message": f"Error: {str(e)}"}
+
+@app.post("/api/users/create")
+async def create_user_api(request: Request):
+    """API endpoint to create a new Cognito user (admin only)."""
+    email, groups = require_auth(request)
+
+    # Check if user is admin
+    if 'admins' not in groups:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        data = await request.json()
+        user_email = data.get("email")
+        user_groups = data.get("groups", [])
+
+        if not user_email:
+            return {"success": False, "message": "Missing email"}
+
+        # Validate email format
+        import re
+        if not re.match(r"[^@]+@[^@]+\.[^@]+", user_email):
+            return {"success": False, "message": "Invalid email format"}
+
+        success, message = create_cognito_user(user_email, user_groups)
         return {"success": success, "message": message}
     except Exception as e:
         return {"success": False, "message": f"Error: {str(e)}"}
@@ -1684,26 +1785,165 @@ cat > /opt/employee-portal/templates/directory.html << 'EOFDIRECTORY'
 
 {% block content %}
 <div class="card">
-    <h2>Employee Directory</h2>
-    <p>This directory shows all registered users and their assigned areas.</p>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <div>
+            <h2>Employee Directory</h2>
+            <p>All registered users in the Cognito user pool.</p>
+        </div>
+        {% if is_admin %}
+        <button onclick="openAddUserModal()" style="background: rgba(0, 255, 0, 0.2); border: 2px solid #00ff00; color: #00ff00; padding: 0.75rem 1.5rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-weight: 700; text-transform: uppercase;">
+            + ADD USER
+        </button>
+        {% endif %}
+    </div>
+
+    <div id="status-message" style="display: none; padding: 1rem; margin-bottom: 1rem; border-radius: 4px;"></div>
 
     <table>
         <thead>
             <tr>
                 <th>Email</th>
-                <th>Assigned Areas</th>
+                <th>Status</th>
+                <th>Groups</th>
             </tr>
         </thead>
         <tbody>
             {% for user in users %}
             <tr>
                 <td>{{ user.email }}</td>
-                <td>{{ user.areas }}</td>
+                <td>
+                    <span style="{% if user.status == 'CONFIRMED' %}color: #00ff00;{% elif user.status == 'FORCE_CHANGE_PASSWORD' %}color: #ffaa00;{% else %}color: #ff0000;{% endif %}">
+                        {{ user.status }}
+                    </span>
+                </td>
+                <td>{{ user.groups }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
 </div>
+
+{% if is_admin %}
+<!-- Add User Modal -->
+<div id="add-user-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.9); z-index: 1000; justify-content: center; align-items: center;">
+    <div style="background: rgba(0, 20, 0, 0.95); border: 2px solid #00ff00; padding: 2rem; max-width: 500px; width: 90%; box-shadow: 0 0 30px rgba(0, 255, 0, 0.5);">
+        <h3 style="color: #00ff00; margin-bottom: 1.5rem;">ADD NEW USER</h3>
+
+        <div style="margin-bottom: 1rem;">
+            <label style="display: block; margin-bottom: 0.5rem; color: #00ff00;">Email Address:</label>
+            <input type="email" id="user-email-input" placeholder="user@capsule.com"
+                   style="width: 100%; background: rgba(0, 0, 0, 0.5); border: 1px solid #00ff00; color: #00ff00; padding: 0.8rem; font-family: 'Source Code Pro', monospace;">
+        </div>
+
+        <div style="margin-bottom: 1.5rem;">
+            <label style="display: block; margin-bottom: 0.5rem; color: #00ff00;">Assign to Groups (select multiple):</label>
+            <div style="background: rgba(0, 0, 0, 0.5); border: 1px solid #00ff00; padding: 0.8rem;">
+                <label style="display: block; margin-bottom: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" value="engineering" style="margin-right: 0.5rem;"> Engineering
+                </label>
+                <label style="display: block; margin-bottom: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" value="hr" style="margin-right: 0.5rem;"> HR
+                </label>
+                <label style="display: block; margin-bottom: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" value="product" style="margin-right: 0.5rem;"> Product
+                </label>
+                <label style="display: block; margin-bottom: 0.5rem; cursor: pointer;">
+                    <input type="checkbox" value="automation" style="margin-right: 0.5rem;"> Automation
+                </label>
+                <label style="display: block; cursor: pointer;">
+                    <input type="checkbox" value="admins" style="margin-right: 0.5rem;"> Admins
+                </label>
+            </div>
+        </div>
+
+        <div style="display: flex; gap: 1rem;">
+            <button onclick="createUser()"
+                    style="flex: 1; background: rgba(0, 255, 0, 0.2); border: 2px solid #00ff00; color: #00ff00; padding: 0.8rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-weight: 700; text-transform: uppercase;">
+                CREATE
+            </button>
+            <button onclick="closeAddUserModal()"
+                    style="flex: 1; background: rgba(255, 0, 0, 0.2); border: 2px solid #ff0000; color: #ff0000; padding: 0.8rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-weight: 700; text-transform: uppercase;">
+                CANCEL
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+function openAddUserModal() {
+    document.getElementById('add-user-modal').style.display = 'flex';
+    document.getElementById('user-email-input').value = '';
+    // Uncheck all checkboxes
+    document.querySelectorAll('#add-user-modal input[type="checkbox"]').forEach(cb => cb.checked = false);
+}
+
+function closeAddUserModal() {
+    document.getElementById('add-user-modal').style.display = 'none';
+}
+
+function showStatus(message, type) {
+    const statusDiv = document.getElementById('status-message');
+    statusDiv.textContent = message;
+    statusDiv.style.display = 'block';
+    statusDiv.style.background = type === 'success' ? 'rgba(0, 255, 0, 0.1)' : 'rgba(255, 0, 0, 0.1)';
+    statusDiv.style.color = type === 'success' ? '#00ff00' : '#ff0000';
+    statusDiv.style.border = type === 'success' ? '1px solid #00ff00' : '1px solid #ff0000';
+
+    setTimeout(() => {
+        statusDiv.style.display = 'none';
+    }, 5000);
+}
+
+async function createUser() {
+    const email = document.getElementById('user-email-input').value.trim();
+
+    if (!email) {
+        showStatus('Please enter an email address', 'error');
+        return;
+    }
+
+    // Get selected groups
+    const groups = [];
+    document.querySelectorAll('#add-user-modal input[type="checkbox"]:checked').forEach(cb => {
+        groups.push(cb.value);
+    });
+
+    try {
+        const response = await fetch('/api/users/create', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                email: email,
+                groups: groups
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            showStatus(data.message, 'success');
+            closeAddUserModal();
+            // Reload page to show new user
+            setTimeout(() => location.reload(), 2000);
+        } else {
+            showStatus(data.message, 'error');
+        }
+    } catch (error) {
+        showStatus('Error creating user: ' + error.message, 'error');
+    }
+}
+
+// Close modal on Escape key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        closeAddUserModal();
+    }
+});
+</script>
+{% endif %}
+
 {% endblock %}
 EOFDIRECTORY
 
