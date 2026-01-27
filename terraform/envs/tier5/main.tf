@@ -514,7 +514,8 @@ resource "aws_iam_role_policy" "ec2_cognito" {
           "cognito-idp:AdminRemoveUserFromGroup",
           "cognito-idp:AdminCreateUser",
           "cognito-idp:AdminDeleteUser",
-          "cognito-idp:AdminSetUserPassword"
+          "cognito-idp:AdminSetUserPassword",
+          "cognito-idp:AdminListUserAuthEvents"
         ]
         Resource = aws_cognito_user_pool.main.arn
       },

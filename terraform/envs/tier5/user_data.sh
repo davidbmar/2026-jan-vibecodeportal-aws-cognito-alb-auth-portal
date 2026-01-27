@@ -1844,11 +1844,26 @@ cat > /opt/employee-portal/templates/directory.html << 'EOFDIRECTORY'
             <h2>Employee Directory</h2>
             <p>All registered users in the Cognito user pool.</p>
         </div>
-        {% if is_admin %}
-        <button onclick="openAddUserModal()" style="background: rgba(0, 255, 0, 0.2); border: 2px solid #00ff00; color: #00ff00; padding: 0.75rem 1.5rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-weight: 700; text-transform: uppercase;">
-            + ADD USER
-        </button>
-        {% endif %}
+        <div style="display: flex; gap: 1rem; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                <label style="color: #00ff00; font-family: 'Source Code Pro', monospace; font-size: 0.9rem;">Timezone:</label>
+                <select id="timezone-selector" onchange="changeTimezone()" style="background: rgba(0, 0, 0, 0.5); border: 1px solid #00ff00; color: #00ff00; padding: 0.5rem; font-family: 'Source Code Pro', monospace; cursor: pointer;">
+                    <option value="America/New_York">East Coast (ET)</option>
+                    <option value="America/Chicago">Central (CT)</option>
+                    <option value="America/Denver">Mountain (MT)</option>
+                    <option value="America/Los_Angeles">West Coast (PT)</option>
+                    <option value="UTC">UTC</option>
+                    <option value="Europe/London">London (GMT)</option>
+                    <option value="Europe/Paris">Paris (CET)</option>
+                    <option value="Asia/Tokyo">Tokyo (JST)</option>
+                </select>
+            </div>
+            {% if is_admin %}
+            <button onclick="openAddUserModal()" style="background: rgba(0, 255, 0, 0.2); border: 2px solid #00ff00; color: #00ff00; padding: 0.75rem 1.5rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-weight: 700; text-transform: uppercase;">
+                + ADD USER
+            </button>
+            {% endif %}
+        </div>
     </div>
 
     <div id="status-message" style="display: none; padding: 1rem; margin-bottom: 1rem; border-radius: 4px;"></div>
@@ -1868,7 +1883,7 @@ cat > /opt/employee-portal/templates/directory.html << 'EOFDIRECTORY'
             {% for user in users %}
             <tr>
                 <td>{{ user.email }}</td>
-                <td style="color: {% if user.last_login == 'Never' %}#ffaa00{% else %}#00ff00{% endif %};">
+                <td class="timestamp-cell" data-utc="{{ user.last_login }}" style="color: {% if user.last_login == 'Never' %}#ffaa00{% else %}#00ff00{% endif %};">
                     {{ user.last_login }}
                 </td>
                 <td>{{ user.groups }}</td>
@@ -2037,6 +2052,81 @@ async function deleteUser(email) {
         showStatus('Error deleting user: ' + error.message, 'error');
     }
 }
+
+// Timezone conversion functionality
+function convertTimestamps() {
+    const timezone = document.getElementById('timezone-selector').value;
+    const cells = document.querySelectorAll('.timestamp-cell');
+
+    cells.forEach(cell => {
+        const utcTime = cell.getAttribute('data-utc');
+
+        if (utcTime === 'Never') {
+            cell.textContent = 'Never';
+            return;
+        }
+
+        try {
+            // Parse UTC time (format: "2026-01-27 22:01 UTC")
+            const dateStr = utcTime.replace(' UTC', '');
+            const date = new Date(dateStr + ' UTC');
+
+            // Format in selected timezone
+            const options = {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                timeZone: timezone,
+                hour12: false
+            };
+
+            const formatter = new Intl.DateTimeFormat('en-US', options);
+            const parts = formatter.formatToParts(date);
+
+            // Build formatted string
+            let formatted = '';
+            parts.forEach(part => {
+                if (part.type === 'month') formatted += part.value + '/';
+                if (part.type === 'day') formatted += part.value + '/';
+                if (part.type === 'year') formatted += part.value + ' ';
+                if (part.type === 'hour') formatted += part.value + ':';
+                if (part.type === 'minute') formatted += part.value;
+            });
+
+            // Add timezone abbreviation
+            const tzAbbr = {
+                'America/New_York': 'ET',
+                'America/Chicago': 'CT',
+                'America/Denver': 'MT',
+                'America/Los_Angeles': 'PT',
+                'UTC': 'UTC',
+                'Europe/London': 'GMT',
+                'Europe/Paris': 'CET',
+                'Asia/Tokyo': 'JST'
+            };
+
+            cell.textContent = formatted + ' ' + (tzAbbr[timezone] || timezone);
+        } catch (e) {
+            console.error('Error converting timestamp:', e);
+            cell.textContent = utcTime;
+        }
+    });
+}
+
+function changeTimezone() {
+    const timezone = document.getElementById('timezone-selector').value;
+    localStorage.setItem('preferredTimezone', timezone);
+    convertTimestamps();
+}
+
+// Load saved timezone preference (default to East Coast)
+document.addEventListener('DOMContentLoaded', () => {
+    const savedTimezone = localStorage.getItem('preferredTimezone') || 'America/New_York';
+    document.getElementById('timezone-selector').value = savedTimezone;
+    convertTimestamps();
+});
 </script>
 {% endif %}
 
