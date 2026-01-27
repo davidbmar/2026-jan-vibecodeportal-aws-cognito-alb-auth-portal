@@ -17,7 +17,7 @@ python3 -m venv venv
 source venv/bin/activate
 
 # Install dependencies
-pip install fastapi uvicorn[standard] python-jose[cryptography] boto3 jinja2 python-multipart
+pip install fastapi uvicorn[standard] python-jose[cryptography] boto3 jinja2 python-multipart pyotp qrcode[pil]
 
 # Create app.py
 cat > /opt/employee-portal/app.py << 'EOFAPP'
@@ -30,9 +30,12 @@ import hmac
 import hashlib
 from typing import Optional
 from datetime import datetime, timedelta
+import io
 import boto3
+import pyotp
+import qrcode
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from jose import jwt
 
@@ -61,6 +64,10 @@ ec2_client = boto3.client('ec2', region_name=AWS_REGION)
 # In-memory cache for group memberships
 group_cache = {}
 CACHE_TTL = 60  # seconds
+
+# In-memory storage for MFA secrets (in production, use database)
+# Format: {email: {"secret": "...", "verified": False}}
+mfa_secrets = {}
 
 # Hardcoded user registry for directory page
 USER_REGISTRY = [
@@ -457,14 +464,112 @@ async def denied(request: Request):
 
 @app.get("/mfa-setup", response_class=HTMLResponse)
 async def mfa_setup_page(request: Request):
-    """MFA setup page - directs users to set up TOTP MFA."""
+    """MFA setup page - shows QR code for TOTP MFA setup."""
     email, groups = require_auth(request)
 
     return templates.TemplateResponse("mfa_setup.html", {
         "request": request,
         "email": email,
-        "groups": groups,
-        "cognito_domain": "employee-portal-gdg66a7d.auth.us-east-1.amazoncognito.com"
+        "groups": groups
+    })
+
+@app.get("/api/mfa/init")
+async def initialize_mfa(request: Request):
+    """Initialize MFA setup - generate TOTP secret and QR code."""
+    email, groups = require_auth(request)
+
+    # Generate a new TOTP secret
+    secret = pyotp.random_base32()
+
+    # Store the secret temporarily (not verified yet)
+    mfa_secrets[email] = {
+        "secret": secret,
+        "verified": False
+    }
+
+    # Create TOTP URI for QR code
+    totp = pyotp.TOTP(secret)
+    provisioning_uri = totp.provisioning_uri(
+        name=email,
+        issuer_name="CAPSULE Portal"
+    )
+
+    # Generate QR code as base64 image
+    qr = qrcode.QRCode(version=1, box_size=10, border=5)
+    qr.add_data(provisioning_uri)
+    qr.make(fit=True)
+
+    img = qr.make_image(fill_color="black", back_color="white")
+
+    # Convert to base64
+    buffer = io.BytesIO()
+    img.save(buffer, format='PNG')
+    buffer.seek(0)
+    qr_base64 = base64.b64encode(buffer.getvalue()).decode()
+
+    return JSONResponse({
+        "success": True,
+        "secret": secret,
+        "qr_code": f"data:image/png;base64,{qr_base64}",
+        "provisioning_uri": provisioning_uri
+    })
+
+@app.post("/api/mfa/verify")
+async def verify_mfa_code(request: Request):
+    """Verify the TOTP code entered by the user."""
+    email, groups = require_auth(request)
+
+    # Get the verification code from request body
+    try:
+        body = await request.json()
+        code = body.get("code", "").strip()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid request body")
+
+    if not code or len(code) != 6:
+        return JSONResponse({
+            "success": False,
+            "error": "Please enter a 6-digit code"
+        }, status_code=400)
+
+    # Check if user has initiated MFA setup
+    if email not in mfa_secrets:
+        return JSONResponse({
+            "success": False,
+            "error": "MFA setup not initialized. Please refresh and try again."
+        }, status_code=400)
+
+    secret = mfa_secrets[email]["secret"]
+
+    # Verify the code
+    totp = pyotp.TOTP(secret)
+    is_valid = totp.verify(code, valid_window=1)  # Allow 1 time step window
+
+    if is_valid:
+        # Mark as verified
+        mfa_secrets[email]["verified"] = True
+
+        return JSONResponse({
+            "success": True,
+            "message": "MFA successfully configured!"
+        })
+    else:
+        return JSONResponse({
+            "success": False,
+            "error": "Invalid code. Please check your authenticator app and try again."
+        }, status_code=400)
+
+@app.get("/api/mfa/status")
+async def get_mfa_status(request: Request):
+    """Check if user has MFA configured."""
+    email, groups = require_auth(request)
+
+    # Check if user has verified MFA
+    has_mfa = email in mfa_secrets and mfa_secrets[email].get("verified", False)
+
+    return JSONResponse({
+        "email": email,
+        "mfa_enabled": has_mfa
     })
 
 @app.get("/password-reset-info", response_class=HTMLResponse)
@@ -1731,27 +1836,258 @@ cat > /opt/employee-portal/templates/mfa_setup.html << 'EOFMFA'
             <p>Multi-Factor Authentication adds an extra layer of security to your account by requiring a time-based code from your authenticator app in addition to your password.</p>
         </div>
 
-        <div class="info-section">
-            <h3>HOW TO ENABLE MFA:</h3>
-            <ol>
-                <li>Download an authenticator app (Google Authenticator, Authy, Microsoft Authenticator)</li>
-                <li>Log out of the portal</li>
-                <li>Log back in - you'll be prompted to set up MFA during login</li>
-                <li>Scan the QR code with your authenticator app</li>
-                <li>Enter the 6-digit code to complete setup</li>
-            </ol>
+        <!-- Loading state -->
+        <div id="loading-state" style="text-align: center; padding: 20px;">
+            <p>🔄 Generating QR code...</p>
         </div>
 
-        <div class="warning-box">
-            <p>⚠ MFA must be configured during your next login through Cognito's authentication flow.</p>
-            <p>This portal uses ALB authentication, so MFA setup happens at the AWS Cognito level.</p>
+        <!-- Error state -->
+        <div id="error-state" style="display: none; text-align: center; padding: 20px;">
+            <p style="color: #ff0000;">❌ <span id="error-message">Failed to initialize MFA setup</span></p>
+            <button onclick="location.reload()" class="btn-primary">Retry</button>
+        </div>
+
+        <!-- MFA Setup Interface -->
+        <div id="mfa-setup-interface" style="display: none;">
+            <!-- Step 1: Download App -->
+            <div class="info-section">
+                <h3>STEP 1: INSTALL AUTHENTICATOR APP</h3>
+                <p>Download one of these apps on your phone:</p>
+                <ul>
+                    <li>Google Authenticator</li>
+                    <li>Microsoft Authenticator</li>
+                    <li>Authy</li>
+                </ul>
+            </div>
+
+            <!-- Step 2: Scan QR Code -->
+            <div class="info-section">
+                <h3>STEP 2: SCAN QR CODE</h3>
+                <div style="text-align: center; padding: 20px; background: #fff; border-radius: 10px; margin: 20px 0;">
+                    <img id="qr-code-image" src="" alt="QR Code" style="max-width: 300px; width: 100%;" />
+                </div>
+                <p style="text-align: center; color: #00ff00; font-size: 0.9em;">
+                    ▼ Scan this QR code with your authenticator app ▼
+                </p>
+            </div>
+
+            <!-- Manual Entry Option -->
+            <div class="info-section">
+                <h3>CAN'T SCAN? ENTER MANUALLY</h3>
+                <p>If you can't scan the QR code, enter this secret key manually in your authenticator app:</p>
+                <div style="background: #000; border: 2px solid #00ff00; padding: 15px; margin: 10px 0; text-align: center; font-family: monospace; font-size: 1.2em; letter-spacing: 2px;">
+                    <code id="secret-key" style="color: #00ff00;">Loading...</code>
+                </div>
+                <button onclick="copySecret()" class="btn-secondary" style="margin-top: 10px;">📋 Copy Secret</button>
+            </div>
+
+            <!-- Step 3: Verify Code -->
+            <div class="info-section">
+                <h3>STEP 3: VERIFY CODE</h3>
+                <p>Enter the 6-digit code from your authenticator app:</p>
+
+                <div style="margin: 20px 0;">
+                    <input
+                        type="text"
+                        id="verification-code"
+                        maxlength="6"
+                        placeholder="000000"
+                        style="width: 200px; padding: 15px; font-size: 1.5em; text-align: center; font-family: monospace; letter-spacing: 5px; background: #000; color: #00ff00; border: 2px solid #00ff00; border-radius: 5px;"
+                        oninput="this.value = this.value.replace(/[^0-9]/g, '')"
+                    />
+                </div>
+
+                <button onclick="verifyCode()" class="btn-primary" id="verify-button">
+                    ✓ VERIFY AND ENABLE MFA
+                </button>
+
+                <div id="verification-status" style="margin-top: 20px; text-align: center;">
+                    <p id="status-message" style="display: none;"></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Success State -->
+        <div id="success-state" style="display: none; text-align: center; padding: 20px;">
+            <div style="font-size: 3em; margin: 20px 0;">✅</div>
+            <h3 style="color: #00ff00;">MFA SUCCESSFULLY CONFIGURED!</h3>
+            <p>Your account is now protected with Multi-Factor Authentication.</p>
+            <p>You'll need to enter a code from your authenticator app each time you log in.</p>
+            <div style="margin-top: 30px;">
+                <a href="/settings" class="btn-primary">← RETURN TO SETTINGS</a>
+            </div>
         </div>
 
         <div class="nav-links">
-            <a href="/">← RETURN TO HOME</a>
+            <a href="/settings">← BACK TO SETTINGS</a>
         </div>
     </div>
 </div>
+
+<style>
+    .btn-primary {
+        background: #00ff00;
+        color: #000;
+        padding: 15px 30px;
+        border: none;
+        border-radius: 5px;
+        font-weight: bold;
+        cursor: pointer;
+        font-size: 1.1em;
+        transition: all 0.3s;
+    }
+
+    .btn-primary:hover {
+        background: #00cc00;
+        transform: scale(1.05);
+    }
+
+    .btn-primary:disabled {
+        background: #666;
+        cursor: not-allowed;
+        transform: none;
+    }
+
+    .btn-secondary {
+        background: #000;
+        color: #00ff00;
+        padding: 10px 20px;
+        border: 2px solid #00ff00;
+        border-radius: 5px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: all 0.3s;
+    }
+
+    .btn-secondary:hover {
+        background: #00ff00;
+        color: #000;
+    }
+
+    #verification-code:focus {
+        outline: none;
+        border-color: #00ff00;
+        box-shadow: 0 0 10px #00ff00;
+    }
+</style>
+
+<script>
+    let currentSecret = null;
+
+    // Initialize MFA setup on page load
+    async function initializeMFA() {
+        try {
+            const response = await fetch('/api/mfa/init');
+            const data = await response.json();
+
+            if (data.success) {
+                // Store secret
+                currentSecret = data.secret;
+
+                // Display QR code
+                document.getElementById('qr-code-image').src = data.qr_code;
+
+                // Display secret key
+                document.getElementById('secret-key').textContent = data.secret;
+
+                // Hide loading, show interface
+                document.getElementById('loading-state').style.display = 'none';
+                document.getElementById('mfa-setup-interface').style.display = 'block';
+            } else {
+                showError('Failed to generate MFA setup');
+            }
+        } catch (error) {
+            console.error('MFA init error:', error);
+            showError('Network error. Please check your connection and try again.');
+        }
+    }
+
+    // Verify the entered code
+    async function verifyCode() {
+        const codeInput = document.getElementById('verification-code');
+        const code = codeInput.value.trim();
+        const statusMsg = document.getElementById('status-message');
+        const verifyButton = document.getElementById('verify-button');
+
+        // Validate input
+        if (code.length !== 6) {
+            statusMsg.textContent = '❌ Please enter a 6-digit code';
+            statusMsg.style.color = '#ff0000';
+            statusMsg.style.display = 'block';
+            return;
+        }
+
+        // Disable button and show loading
+        verifyButton.disabled = true;
+        verifyButton.textContent = '⏳ Verifying...';
+        statusMsg.textContent = '🔄 Checking code...';
+        statusMsg.style.color = '#ffff00';
+        statusMsg.style.display = 'block';
+
+        try {
+            const response = await fetch('/api/mfa/verify', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ code })
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                // Success! Show success state
+                document.getElementById('mfa-setup-interface').style.display = 'none';
+                document.getElementById('success-state').style.display = 'block';
+            } else {
+                // Invalid code
+                statusMsg.textContent = '❌ ' + (data.error || 'Invalid code. Please try again.');
+                statusMsg.style.color = '#ff0000';
+                verifyButton.disabled = false;
+                verifyButton.textContent = '✓ VERIFY AND ENABLE MFA';
+
+                // Clear input
+                codeInput.value = '';
+                codeInput.focus();
+            }
+        } catch (error) {
+            console.error('Verification error:', error);
+            statusMsg.textContent = '❌ Network error. Please try again.';
+            statusMsg.style.color = '#ff0000';
+            verifyButton.disabled = false;
+            verifyButton.textContent = '✓ VERIFY AND ENABLE MFA';
+        }
+    }
+
+    // Copy secret to clipboard
+    function copySecret() {
+        const secretText = document.getElementById('secret-key').textContent;
+        navigator.clipboard.writeText(secretText).then(() => {
+            alert('✅ Secret key copied to clipboard!');
+        }).catch(err => {
+            console.error('Copy failed:', err);
+            alert('❌ Failed to copy. Please select and copy manually.');
+        });
+    }
+
+    // Show error state
+    function showError(message) {
+        document.getElementById('loading-state').style.display = 'none';
+        document.getElementById('error-message').textContent = message;
+        document.getElementById('error-state').style.display = 'block';
+    }
+
+    // Allow Enter key to verify
+    document.addEventListener('DOMContentLoaded', () => {
+        initializeMFA();
+
+        document.getElementById('verification-code').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                verifyCode();
+            }
+        });
+    });
+</script>
 {% endblock %}
 EOFMFA
 
