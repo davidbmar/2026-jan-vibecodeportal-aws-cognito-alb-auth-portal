@@ -278,11 +278,13 @@ def generate_instance_name() -> str:
 
 def ensure_ssh_security_group(vpc_id: str, portal_private_ip: str) -> Optional[str]:
     """
-    Create or reuse security group for launched instances with SSH access.
+    Create or reuse security group for launched instances.
 
-    Creates a security group named 'vibecode-launched-instances-ssh' if it
-    doesn't exist. Ensures SSH ingress rule (TCP port 22) is restricted to
-    the portal host's private IP only.
+    Creates a security group named 'vibecode-launched-instances' if it
+    doesn't exist. Ensures proper ingress rules:
+    - SSH (port 22): Restricted to portal host's private IP only
+    - HTTP (port 80): Open to internet (0.0.0.0/0)
+    - HTTPS (port 443): Open to internet (0.0.0.0/0)
 
     Args:
         vpc_id: VPC ID where security group should be created
@@ -291,8 +293,8 @@ def ensure_ssh_security_group(vpc_id: str, portal_private_ip: str) -> Optional[s
     Returns:
         str: Security group ID if successful, None on error
     """
-    sg_name = 'vibecode-launched-instances-ssh'
-    sg_description = 'SSH access from VibeCode portal host only'
+    sg_name = 'vibecode-launched-instances'
+    sg_description = 'SSH from portal, HTTP/HTTPS from internet'
 
     try:
         # Check if security group already exists
@@ -307,30 +309,68 @@ def ensure_ssh_security_group(vpc_id: str, portal_private_ip: str) -> Optional[s
             sg_id = response['SecurityGroups'][0]['GroupId']
             print(f"Security group already exists: {sg_id}")
 
-            # Verify SSH rule exists for portal IP
+            # Verify required rules exist
             sg = response['SecurityGroups'][0]
-            rule_exists = False
+            existing_rules = sg.get('IpPermissions', [])
 
-            for rule in sg.get('IpPermissions', []):
-                if (rule.get('IpProtocol') == 'tcp' and
-                    rule.get('FromPort') == 22 and
-                    rule.get('ToPort') == 22):
-                    for ip_range in rule.get('IpRanges', []):
-                        if ip_range.get('CidrIp') == f"{portal_private_ip}/32":
-                            rule_exists = True
-                            break
+            ssh_rule_exists = False
+            http_rule_exists = False
+            https_rule_exists = False
 
-            # Add rule if missing
-            if not rule_exists:
+            for rule in existing_rules:
+                if rule.get('IpProtocol') == 'tcp':
+                    # Check SSH rule (port 22 from portal IP)
+                    if rule.get('FromPort') == 22 and rule.get('ToPort') == 22:
+                        for ip_range in rule.get('IpRanges', []):
+                            if ip_range.get('CidrIp') == f"{portal_private_ip}/32":
+                                ssh_rule_exists = True
+
+                    # Check HTTP rule (port 80 from anywhere)
+                    if rule.get('FromPort') == 80 and rule.get('ToPort') == 80:
+                        for ip_range in rule.get('IpRanges', []):
+                            if ip_range.get('CidrIp') == '0.0.0.0/0':
+                                http_rule_exists = True
+
+                    # Check HTTPS rule (port 443 from anywhere)
+                    if rule.get('FromPort') == 443 and rule.get('ToPort') == 443:
+                        for ip_range in rule.get('IpRanges', []):
+                            if ip_range.get('CidrIp') == '0.0.0.0/0':
+                                https_rule_exists = True
+
+            # Add missing rules
+            rules_to_add = []
+
+            if not ssh_rule_exists:
                 print(f"Adding SSH rule for {portal_private_ip}/32")
+                rules_to_add.append({
+                    'IpProtocol': 'tcp',
+                    'FromPort': 22,
+                    'ToPort': 22,
+                    'IpRanges': [{'CidrIp': f"{portal_private_ip}/32", 'Description': 'SSH from portal host'}]
+                })
+
+            if not http_rule_exists:
+                print("Adding HTTP rule for 0.0.0.0/0")
+                rules_to_add.append({
+                    'IpProtocol': 'tcp',
+                    'FromPort': 80,
+                    'ToPort': 80,
+                    'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'HTTP from internet'}]
+                })
+
+            if not https_rule_exists:
+                print("Adding HTTPS rule for 0.0.0.0/0")
+                rules_to_add.append({
+                    'IpProtocol': 'tcp',
+                    'FromPort': 443,
+                    'ToPort': 443,
+                    'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'HTTPS from internet'}]
+                })
+
+            if rules_to_add:
                 ec2_client.authorize_security_group_ingress(
                     GroupId=sg_id,
-                    IpPermissions=[{
-                        'IpProtocol': 'tcp',
-                        'FromPort': 22,
-                        'ToPort': 22,
-                        'IpRanges': [{'CidrIp': f"{portal_private_ip}/32", 'Description': 'SSH from portal host'}]
-                    }]
+                    IpPermissions=rules_to_add
                 )
 
             return sg_id
@@ -353,22 +393,36 @@ def ensure_ssh_security_group(vpc_id: str, portal_private_ip: str) -> Optional[s
         sg_id = create_response['GroupId']
         print(f"Created security group: {sg_id}")
 
-        # Add SSH ingress rule
+        # Add all ingress rules
         ec2_client.authorize_security_group_ingress(
             GroupId=sg_id,
-            IpPermissions=[{
-                'IpProtocol': 'tcp',
-                'FromPort': 22,
-                'ToPort': 22,
-                'IpRanges': [{'CidrIp': f"{portal_private_ip}/32", 'Description': 'SSH from portal host'}]
-            }]
+            IpPermissions=[
+                {
+                    'IpProtocol': 'tcp',
+                    'FromPort': 22,
+                    'ToPort': 22,
+                    'IpRanges': [{'CidrIp': f"{portal_private_ip}/32", 'Description': 'SSH from portal host'}]
+                },
+                {
+                    'IpProtocol': 'tcp',
+                    'FromPort': 80,
+                    'ToPort': 80,
+                    'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'HTTP from internet'}]
+                },
+                {
+                    'IpProtocol': 'tcp',
+                    'FromPort': 443,
+                    'ToPort': 443,
+                    'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'HTTPS from internet'}]
+                }
+            ]
         )
 
-        print(f"Added SSH rule for {portal_private_ip}/32")
+        print(f"Added SSH, HTTP, and HTTPS rules")
         return sg_id
 
     except Exception as e:
-        print(f"Failed to ensure SSH security group: {e}")
+        print(f"Failed to ensure security group: {e}")
         return None
 
 
@@ -3296,7 +3350,7 @@ cat > /opt/employee-portal/templates/ec2_resources.html << 'EOFEC2'
             <div style="color: #88ff88;">• OS: Ubuntu 22.04 LTS (latest AMI)</div>
             <div style="color: #88ff88;">• Key Pair: david-capsule-vibecode-2026-01-17</div>
             <div style="color: #88ff88;">• Network: Same VPC/subnet as portal</div>
-            <div style="color: #88ff88;">• SSH Access: Portal host only (restricted)</div>
+            <div style="color: #88ff88;">• Ports: SSH (22) portal only, HTTP (80) + HTTPS (443) open</div>
             <div style="color: #88ff88;">• Auto-naming: YYYY-MM-mon-DD-vibecode-instance-##</div>
         </div>
 
