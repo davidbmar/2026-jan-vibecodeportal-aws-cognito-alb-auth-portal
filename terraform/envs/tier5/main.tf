@@ -526,7 +526,13 @@ resource "aws_iam_role_policy" "ec2_cognito" {
           "ec2:DescribeTags",
           "ec2:CreateTags",
           "ec2:DescribeInstanceStatus",
-          "ec2:DescribeSecurityGroups"
+          "ec2:DescribeSecurityGroups",
+          "ec2:DescribeImages",
+          "ec2:RunInstances",
+          "ec2:CreateSecurityGroup",
+          "ec2:AuthorizeSecurityGroupIngress",
+          "ec2:DescribeSubnets",
+          "ec2:DescribeVpcs"
         ]
         Resource = "*"
       }

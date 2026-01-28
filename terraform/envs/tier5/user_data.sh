@@ -108,6 +108,378 @@ group_cache = {}
 CACHE_TTL = 60  # seconds
 
 # ============================================================================
+# EC2 INSTANCE LAUNCH HELPERS
+# ============================================================================
+
+def get_instance_metadata(path: str) -> Optional[str]:
+    """
+    Query EC2 metadata service (IMDSv2) for current instance info.
+
+    Uses IMDSv2 token-based access for secure metadata retrieval.
+    Common paths: instance-id, local-ipv4, placement/availability-zone
+
+    Args:
+        path: Metadata path to query (e.g., 'instance-id', 'local-ipv4')
+
+    Returns:
+        str: Metadata value if found, None on error
+    """
+    import urllib.request
+    import urllib.error
+
+    try:
+        # Step 1: Get IMDSv2 token
+        token_request = urllib.request.Request(
+            'http://169.254.169.254/latest/api/token',
+            headers={'X-aws-ec2-metadata-token-ttl-seconds': '21600'},
+            method='PUT'
+        )
+        token = urllib.request.urlopen(token_request, timeout=2).read().decode('utf-8')
+
+        # Step 2: Query metadata using token
+        metadata_request = urllib.request.Request(
+            f'http://169.254.169.254/latest/meta-data/{path}',
+            headers={'X-aws-ec2-metadata-token': token}
+        )
+        return urllib.request.urlopen(metadata_request, timeout=2).read().decode('utf-8')
+    except Exception as e:
+        print(f"Failed to query metadata {path}: {e}")
+        return None
+
+
+def get_current_instance_info() -> dict:
+    """
+    Get portal instance's VPC, subnet, private IP, and security groups.
+
+    Combines metadata service queries with describe_instances API call
+    to gather complete network configuration of the portal host.
+
+    Returns:
+        dict: {instance_id, private_ip, vpc_id, subnet_id, security_groups}
+              Returns empty dict on error
+    """
+    try:
+        # Query metadata service
+        instance_id = get_instance_metadata('instance-id')
+        private_ip = get_instance_metadata('local-ipv4')
+
+        if not instance_id or not private_ip:
+            print("Failed to get instance ID or private IP from metadata")
+            return {}
+
+        # Query EC2 API for VPC/subnet details
+        response = ec2_client.describe_instances(InstanceIds=[instance_id])
+
+        if not response['Reservations']:
+            print(f"No reservation found for instance {instance_id}")
+            return {}
+
+        instance = response['Reservations'][0]['Instances'][0]
+
+        return {
+            'instance_id': instance_id,
+            'private_ip': private_ip,
+            'vpc_id': instance.get('VpcId'),
+            'subnet_id': instance.get('SubnetId'),
+            'security_groups': [sg['GroupId'] for sg in instance.get('SecurityGroups', [])]
+        }
+    except Exception as e:
+        print(f"Failed to get current instance info: {e}")
+        return {}
+
+
+def get_latest_ubuntu_ami() -> Optional[str]:
+    """
+    Query latest Ubuntu 22.04 LTS AMI from Canonical.
+
+    Searches for official Ubuntu Server 22.04 LTS (Jammy) AMIs from
+    Canonical's AWS account (099720109477) and returns the most recent one.
+
+    Returns:
+        str: AMI ID (e.g., 'ami-0abc123def456') if found, None on error
+    """
+    try:
+        response = ec2_client.describe_images(
+            Owners=['099720109477'],  # Canonical's AWS account
+            Filters=[
+                {'Name': 'name', 'Values': ['ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*']},
+                {'Name': 'state', 'Values': ['available']},
+                {'Name': 'architecture', 'Values': ['x86_64']},
+                {'Name': 'virtualization-type', 'Values': ['hvm']},
+                {'Name': 'root-device-type', 'Values': ['ebs']}
+            ]
+        )
+
+        if not response['Images']:
+            print("No Ubuntu 22.04 LTS AMIs found")
+            return None
+
+        # Sort by creation date (newest first) and return the latest
+        sorted_images = sorted(response['Images'], key=lambda x: x['CreationDate'], reverse=True)
+        latest_ami = sorted_images[0]['ImageId']
+        print(f"Found latest Ubuntu 22.04 AMI: {latest_ami} (created: {sorted_images[0]['CreationDate']})")
+        return latest_ami
+
+    except Exception as e:
+        print(f"Failed to query Ubuntu AMI: {e}")
+        return None
+
+
+def generate_instance_name() -> str:
+    """
+    Generate unique instance name: 2026-01-jan-27-vibecode-instance-01
+
+    Queries existing instances with today's date prefix to find the highest
+    counter, then increments by 1. Falls back to timestamp if query fails.
+
+    Returns:
+        str: Unique instance name with format YYYY-MM-{month}-DD-vibecode-instance-{counter}
+    """
+    try:
+        now = datetime.now()
+        # Format: 2026-01-jan-27
+        month_abbr = now.strftime('%b').lower()
+        date_prefix = f"{now.year}-{now.month:02d}-{month_abbr}-{now.day:02d}-vibecode-instance"
+
+        # Query instances with today's date prefix
+        response = ec2_client.describe_instances(
+            Filters=[
+                {'Name': 'tag:Name', 'Values': [f"{date_prefix}-*"]},
+                {'Name': 'instance-state-name', 'Values': ['pending', 'running', 'stopping', 'stopped']}
+            ]
+        )
+
+        # Find highest counter
+        max_counter = 0
+        pattern = re.compile(rf"{re.escape(date_prefix)}-(\d+)")
+
+        for reservation in response['Reservations']:
+            for instance in reservation['Instances']:
+                for tag in instance.get('Tags', []):
+                    if tag['Key'] == 'Name':
+                        match = pattern.match(tag['Value'])
+                        if match:
+                            counter = int(match.group(1))
+                            max_counter = max(max_counter, counter)
+
+        # Increment counter
+        new_counter = max_counter + 1
+        instance_name = f"{date_prefix}-{new_counter:02d}"
+        print(f"Generated instance name: {instance_name}")
+        return instance_name
+
+    except Exception as e:
+        # Fallback: use timestamp
+        timestamp = int(time.time())
+        fallback_name = f"{now.year}-{now.month:02d}-{month_abbr}-{now.day:02d}-vibecode-instance-{timestamp}"
+        print(f"Failed to generate name from counters, using fallback: {fallback_name} (error: {e})")
+        return fallback_name
+
+
+def ensure_ssh_security_group(vpc_id: str, portal_private_ip: str) -> Optional[str]:
+    """
+    Create or reuse security group for launched instances with SSH access.
+
+    Creates a security group named 'vibecode-launched-instances-ssh' if it
+    doesn't exist. Ensures SSH ingress rule (TCP port 22) is restricted to
+    the portal host's private IP only.
+
+    Args:
+        vpc_id: VPC ID where security group should be created
+        portal_private_ip: Portal host's private IP (e.g., '10.0.1.50')
+
+    Returns:
+        str: Security group ID if successful, None on error
+    """
+    sg_name = 'vibecode-launched-instances-ssh'
+    sg_description = 'SSH access from VibeCode portal host only'
+
+    try:
+        # Check if security group already exists
+        response = ec2_client.describe_security_groups(
+            Filters=[
+                {'Name': 'group-name', 'Values': [sg_name]},
+                {'Name': 'vpc-id', 'Values': [vpc_id]}
+            ]
+        )
+
+        if response['SecurityGroups']:
+            sg_id = response['SecurityGroups'][0]['GroupId']
+            print(f"Security group already exists: {sg_id}")
+
+            # Verify SSH rule exists for portal IP
+            sg = response['SecurityGroups'][0]
+            rule_exists = False
+
+            for rule in sg.get('IpPermissions', []):
+                if (rule.get('IpProtocol') == 'tcp' and
+                    rule.get('FromPort') == 22 and
+                    rule.get('ToPort') == 22):
+                    for ip_range in rule.get('IpRanges', []):
+                        if ip_range.get('CidrIp') == f"{portal_private_ip}/32":
+                            rule_exists = True
+                            break
+
+            # Add rule if missing
+            if not rule_exists:
+                print(f"Adding SSH rule for {portal_private_ip}/32")
+                ec2_client.authorize_security_group_ingress(
+                    GroupId=sg_id,
+                    IpPermissions=[{
+                        'IpProtocol': 'tcp',
+                        'FromPort': 22,
+                        'ToPort': 22,
+                        'IpRanges': [{'CidrIp': f"{portal_private_ip}/32", 'Description': 'SSH from portal host'}]
+                    }]
+                )
+
+            return sg_id
+
+        # Create new security group
+        print(f"Creating security group: {sg_name}")
+        create_response = ec2_client.create_security_group(
+            GroupName=sg_name,
+            Description=sg_description,
+            VpcId=vpc_id,
+            TagSpecifications=[{
+                'ResourceType': 'security-group',
+                'Tags': [
+                    {'Key': 'Name', 'Value': sg_name},
+                    {'Key': 'ManagedBy', 'Value': 'vibecode-portal'}
+                ]
+            }]
+        )
+
+        sg_id = create_response['GroupId']
+        print(f"Created security group: {sg_id}")
+
+        # Add SSH ingress rule
+        ec2_client.authorize_security_group_ingress(
+            GroupId=sg_id,
+            IpPermissions=[{
+                'IpProtocol': 'tcp',
+                'FromPort': 22,
+                'ToPort': 22,
+                'IpRanges': [{'CidrIp': f"{portal_private_ip}/32", 'Description': 'SSH from portal host'}]
+            }]
+        )
+
+        print(f"Added SSH rule for {portal_private_ip}/32")
+        return sg_id
+
+    except Exception as e:
+        print(f"Failed to ensure SSH security group: {e}")
+        return None
+
+
+def launch_ec2_instance(instance_type: str, area: str) -> tuple:
+    """
+    Launch EC2 instance with full configuration and atomic tagging.
+
+    Orchestrates the entire launch process: validation, metadata gathering,
+    AMI lookup, name generation, security group setup, and instance creation
+    with atomic tag application using TagSpecifications.
+
+    Args:
+        instance_type: EC2 instance type (e.g., 't3.micro', 't3.small')
+        area: VibeCodeArea tag value (e.g., 'engineering', 'hr')
+
+    Returns:
+        tuple: (success: bool, message: str, result_data: dict)
+               result_data contains {instance_id, name, private_ip, type, area}
+    """
+    # Validate inputs
+    valid_instance_types = ['t3.micro', 't3.small', 't3.medium', 't3.large', 'm7i.large']
+    if not instance_type or instance_type not in valid_instance_types:
+        return (False, f"Invalid instance type. Must be one of: {', '.join(valid_instance_types)}", {})
+
+    if not area or not area.strip():
+        return (False, "VibeCodeArea tag is required", {})
+
+    area = area.strip()
+
+    try:
+        # Step 1: Get portal instance metadata
+        print("Getting portal instance metadata...")
+        portal_info = get_current_instance_info()
+        if not portal_info:
+            return (False, "Failed to get portal instance network information", {})
+
+        vpc_id = portal_info.get('vpc_id')
+        subnet_id = portal_info.get('subnet_id')
+        portal_ip = portal_info.get('private_ip')
+
+        if not all([vpc_id, subnet_id, portal_ip]):
+            return (False, "Incomplete portal network information (missing VPC/subnet/IP)", {})
+
+        print(f"Portal info: VPC={vpc_id}, Subnet={subnet_id}, IP={portal_ip}")
+
+        # Step 2: Get latest Ubuntu 22.04 AMI
+        print("Looking up latest Ubuntu 22.04 AMI...")
+        ami_id = get_latest_ubuntu_ami()
+        if not ami_id:
+            return (False, "Failed to find Ubuntu 22.04 LTS AMI", {})
+
+        # Step 3: Generate unique instance name
+        print("Generating unique instance name...")
+        instance_name = generate_instance_name()
+
+        # Step 4: Ensure SSH security group exists
+        print("Setting up SSH security group...")
+        ssh_sg_id = ensure_ssh_security_group(vpc_id, portal_ip)
+        if not ssh_sg_id:
+            return (False, "Failed to create/configure SSH security group", {})
+
+        # Step 5: Launch instance with atomic tagging
+        print(f"Launching {instance_type} instance...")
+        launch_response = ec2_client.run_instances(
+            ImageId=ami_id,
+            InstanceType=instance_type,
+            KeyName='david-capsule-vibecode-2026-01-17',
+            SubnetId=subnet_id,
+            SecurityGroupIds=[ssh_sg_id],
+            MinCount=1,
+            MaxCount=1,
+            TagSpecifications=[{
+                'ResourceType': 'instance',
+                'Tags': [
+                    {'Key': 'Name', 'Value': instance_name},
+                    {'Key': 'VibeCodeArea', 'Value': area},
+                    {'Key': 'LaunchedBy', 'Value': 'vibecode-portal'},
+                    {'Key': 'LaunchDate', 'Value': datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                ]
+            }]
+        )
+
+        instance_id = launch_response['Instances'][0]['InstanceId']
+        print(f"Instance launched: {instance_id}")
+
+        # Step 6: Wait briefly for IP assignment
+        time.sleep(2)
+
+        # Query instance to get private IP
+        describe_response = ec2_client.describe_instances(InstanceIds=[instance_id])
+        instance = describe_response['Reservations'][0]['Instances'][0]
+        private_ip = instance.get('PrivateIpAddress', 'pending')
+
+        result_data = {
+            'instance_id': instance_id,
+            'name': instance_name,
+            'private_ip': private_ip,
+            'type': instance_type,
+            'area': area
+        }
+
+        success_message = f"Successfully launched instance {instance_name} ({instance_id})"
+        print(success_message)
+        return (True, success_message, result_data)
+
+    except Exception as e:
+        error_message = f"Failed to launch instance: {str(e)}"
+        print(error_message)
+        return (False, error_message, {})
+
+# ============================================================================
 # EMAIL MFA CONFIGURATION
 # ============================================================================
 # Email-based MFA is handled by Cognito custom auth Lambda triggers.
@@ -375,6 +747,9 @@ def create_cognito_user(email: str, groups: list = None) -> tuple:
             - (False, "Error: ...") on failure
     """
     try:
+        # Normalize email to lowercase to prevent case sensitivity issues
+        email = email.lower().strip()
+
         # Generate a temporary password (satisfies Cognito requirements, but never sent to user)
         import secrets
         import string
@@ -482,6 +857,9 @@ async def login_page(request: Request):
 @app.post("/login", response_class=HTMLResponse)
 async def login_submit(request: Request, email: str = Form(...)):
     """Handle login form submission - initiate passwordless custom auth."""
+    # Normalize email to lowercase to prevent case sensitivity issues
+    email = email.lower().strip()
+
     try:
         response = cognito_client.initiate_auth(
             AuthFlow='CUSTOM_AUTH',
@@ -953,6 +1331,10 @@ async def create_user(request: Request):
     try:
         form_data = await request.form()
         user_email = form_data.get("email")
+
+        # Normalize email to lowercase to prevent case sensitivity issues
+        user_email = user_email.lower().strip()
+
         temporary_password = form_data.get("temp_password", "TempPass123!")
 
         # Create user
@@ -1049,6 +1431,36 @@ async def tag_ec2_instance_api(request: Request):
 
         success, message = tag_instance(instance_id, area)
         return {"success": success, "message": message}
+    except Exception as e:
+        return {"success": False, "message": f"Error: {str(e)}"}
+
+@app.post("/api/ec2/launch-instance")
+async def launch_ec2_instance_api(request: Request):
+    """API endpoint to launch a new EC2 instance (admin only)."""
+    email, groups = require_auth(request)
+
+    # Check if user is admin
+    if 'admins' not in groups:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        data = await request.json()
+        instance_type = data.get("instance_type")
+        area = data.get("area")
+
+        if not instance_type:
+            return {"success": False, "message": "Missing instance_type"}
+
+        if not area:
+            return {"success": False, "message": "Missing area"}
+
+        success, message, result_data = launch_ec2_instance(instance_type, area)
+
+        if success:
+            return {"success": True, "message": message, "instance": result_data}
+        else:
+            return {"success": False, "message": message}
+
     except Exception as e:
         return {"success": False, "message": f"Error: {str(e)}"}
 
@@ -2843,31 +3255,61 @@ cat > /opt/employee-portal/templates/ec2_resources.html << 'EOFEC2'
 </div>
 
 <!-- Add Instance Modal -->
-<div id="add-instance-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.9); z-index: 1000; justify-content: center; align-items: center;">
-    <div style="background: rgba(0, 20, 0, 0.95); border: 2px solid #00ff00; padding: 2rem; max-width: 500px; width: 90%; box-shadow: 0 0 30px rgba(0, 255, 0, 0.5);">
-        <h3 style="color: #00ff00; margin-bottom: 1.5rem;">ADD EC2 INSTANCE</h3>
+<div id="add-instance-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.9); z-index: 1000; justify-content: center; align-items: center; overflow-y: auto;">
+    <div style="background: rgba(0, 20, 0, 0.95); border: 2px solid #00ff00; padding: 2rem; max-width: 600px; width: 90%; box-shadow: 0 0 30px rgba(0, 255, 0, 0.5); margin: 2rem auto;">
+        <h3 style="color: #00ff00; margin-bottom: 1.5rem;">LAUNCH NEW EC2 INSTANCE</h3>
 
         <div style="margin-bottom: 1rem;">
-            <label style="display: block; margin-bottom: 0.5rem; color: #00ff00;">Instance ID:</label>
-            <input type="text" id="instance-id-input" placeholder="i-0123456789abcdef0"
-                   style="width: 100%; background: rgba(0, 0, 0, 0.5); border: 1px solid #00ff00; color: #00ff00; padding: 0.8rem; font-family: 'Source Code Pro', monospace;">
-        </div>
-
-        <div style="margin-bottom: 1.5rem;">
-            <label style="display: block; margin-bottom: 0.5rem; color: #00ff00;">Map to Area:</label>
-            <select id="area-select"
+            <label style="display: block; margin-bottom: 0.5rem; color: #00ff00;">Instance Type:</label>
+            <select id="instance-type-select"
                     style="width: 100%; background: rgba(0, 0, 0, 0.5); border: 1px solid #00ff00; color: #00ff00; padding: 0.8rem; font-family: 'Source Code Pro', monospace;">
-                <option value="">-- Select Area --</option>
-                <option value="engineering">Engineering</option>
-                <option value="hr">HR</option>
-                <option value="product">Product</option>
+                <option value="">-- Select Instance Type --</option>
+                <option value="t3.micro">t3.micro (2 vCPU, 1 GB RAM)</option>
+                <option value="t3.small">t3.small (2 vCPU, 2 GB RAM)</option>
+                <option value="t3.medium">t3.medium (2 vCPU, 4 GB RAM)</option>
+                <option value="t3.large">t3.large (2 vCPU, 8 GB RAM)</option>
+                <option value="m7i.large">m7i.large (2 vCPU, 8 GB RAM)</option>
             </select>
         </div>
 
+        <div style="margin-bottom: 1rem;">
+            <label style="display: block; margin-bottom: 0.5rem; color: #00ff00;">VibeCodeArea Tag:</label>
+            <select id="area-select" onchange="toggleCustomArea()"
+                    style="width: 100%; background: rgba(0, 0, 0, 0.5); border: 1px solid #00ff00; color: #00ff00; padding: 0.8rem; font-family: 'Source Code Pro', monospace;">
+                <option value="">-- Select Area --</option>
+                <option value="engineering">engineering</option>
+                <option value="hr">hr</option>
+                <option value="automation">automation</option>
+                <option value="product">product</option>
+                <option value="custom">Custom (type below)</option>
+            </select>
+        </div>
+
+        <div id="custom-area-container" style="margin-bottom: 1rem; display: none;">
+            <label style="display: block; margin-bottom: 0.5rem; color: #00ff00;">Custom Area Name:</label>
+            <input type="text" id="custom-area-input" placeholder="e.g., finance, operations"
+                   style="width: 100%; background: rgba(0, 0, 0, 0.5); border: 1px solid #00ff00; color: #00ff00; padding: 0.8rem; font-family: 'Source Code Pro', monospace;">
+        </div>
+
+        <div style="background: rgba(0, 100, 0, 0.3); border: 1px solid #00ff00; padding: 1rem; margin-bottom: 1.5rem; font-size: 0.85rem;">
+            <div style="color: #00ff00; font-weight: 700; margin-bottom: 0.5rem;">INSTANCE CONFIGURATION:</div>
+            <div style="color: #88ff88;">• OS: Ubuntu 22.04 LTS (latest AMI)</div>
+            <div style="color: #88ff88;">• Key Pair: david-capsule-vibecode-2026-01-17</div>
+            <div style="color: #88ff88;">• Network: Same VPC/subnet as portal</div>
+            <div style="color: #88ff88;">• SSH Access: Portal host only (restricted)</div>
+            <div style="color: #88ff88;">• Auto-naming: YYYY-MM-mon-DD-vibecode-instance-##</div>
+        </div>
+
+        <div id="launch-loading" style="display: none; background: rgba(255, 255, 0, 0.2); border: 1px solid #ffff00; padding: 1rem; margin-bottom: 1rem; color: #ffff00; text-align: center;">
+            Launching instance... This may take 30-60 seconds
+        </div>
+
+        <div id="launch-result" style="display: none; padding: 1rem; margin-bottom: 1rem; border-radius: 4px;"></div>
+
         <div style="display: flex; gap: 1rem;">
-            <button onclick="addInstance()"
+            <button id="launch-button" onclick="launchInstance()"
                     style="flex: 1; background: rgba(0, 255, 0, 0.2); border: 2px solid #00ff00; color: #00ff00; padding: 0.8rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-weight: 700; text-transform: uppercase;">
-                ADD
+                LAUNCH
             </button>
             <button onclick="closeModal()"
                     style="flex: 1; background: rgba(255, 0, 0, 0.2); border: 2px solid #ff0000; color: #ff0000; padding: 0.8rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-weight: 700; text-transform: uppercase;">
@@ -2955,44 +3397,126 @@ function showAddInstanceModal() {
     document.getElementById('add-instance-modal').style.display = 'flex';
 }
 
-function closeModal() {
-    document.getElementById('add-instance-modal').style.display = 'none';
-    document.getElementById('instance-id-input').value = '';
-    document.getElementById('area-select').value = '';
+function toggleCustomArea() {
+    const areaSelect = document.getElementById('area-select').value;
+    const customContainer = document.getElementById('custom-area-container');
+
+    if (areaSelect === 'custom') {
+        customContainer.style.display = 'block';
+    } else {
+        customContainer.style.display = 'none';
+    }
 }
 
-async function addInstance() {
-    const instanceId = document.getElementById('instance-id-input').value.trim();
-    const area = document.getElementById('area-select').value;
+function closeModal() {
+    document.getElementById('add-instance-modal').style.display = 'none';
+    document.getElementById('instance-type-select').value = '';
+    document.getElementById('area-select').value = '';
+    document.getElementById('custom-area-input').value = '';
+    document.getElementById('custom-area-container').style.display = 'none';
+    document.getElementById('launch-loading').style.display = 'none';
+    document.getElementById('launch-result').style.display = 'none';
+    document.getElementById('launch-button').disabled = false;
+}
 
-    if (!instanceId || !area) {
-        showStatus('Please provide both Instance ID and Area', 'error');
+async function launchInstance() {
+    const instanceType = document.getElementById('instance-type-select').value;
+    const areaSelect = document.getElementById('area-select').value;
+    const customArea = document.getElementById('custom-area-input').value.trim();
+
+    // Determine final area value
+    let area = areaSelect;
+    if (areaSelect === 'custom') {
+        if (!customArea) {
+            showStatus('Please enter a custom area name', 'error');
+            return;
+        }
+        area = customArea;
+    }
+
+    // Validate inputs
+    if (!instanceType) {
+        showStatus('Please select an instance type', 'error');
         return;
     }
 
+    if (!areaSelect) {
+        showStatus('Please select an area', 'error');
+        return;
+    }
+
+    // Show loading state
+    const launchButton = document.getElementById('launch-button');
+    const loadingDiv = document.getElementById('launch-loading');
+    const resultDiv = document.getElementById('launch-result');
+
+    launchButton.disabled = true;
+    loadingDiv.style.display = 'block';
+    resultDiv.style.display = 'none';
+
     try {
-        const response = await fetch('/api/ec2/tag-instance', {
+        const response = await fetch('/api/ec2/launch-instance', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                instance_id: instanceId,
+                instance_type: instanceType,
                 area: area
             })
         });
 
         const data = await response.json();
 
+        loadingDiv.style.display = 'none';
+
         if (data.success) {
+            // Show success message with instance details (using safe textContent)
+            resultDiv.textContent = '';
+            resultDiv.style.background = 'rgba(0, 100, 0, 0.5)';
+            resultDiv.style.border = '1px solid #00ff00';
+            resultDiv.style.color = '#00ff00';
+
+            const successText = '✓ Instance Launched Successfully!\\n\\n' +
+                'Name: ' + data.instance.name + '\\n' +
+                'Instance ID: ' + data.instance.instance_id + '\\n' +
+                'Type: ' + data.instance.type + '\\n' +
+                'Private IP: ' + data.instance.private_ip + '\\n' +
+                'Area: ' + data.instance.area;
+
+            resultDiv.textContent = successText;
+            resultDiv.style.whiteSpace = 'pre-line';
+            resultDiv.style.display = 'block';
+
+            // Show status and refresh instances list
             showStatus(data.message, 'success');
-            closeModal();
             refreshInstances();
+
+            // Auto-close modal after 3 seconds
+            setTimeout(() => {
+                closeModal();
+            }, 3000);
         } else {
+            // Show error message
+            resultDiv.textContent = '✗ Launch Failed\\n\\n' + data.message;
+            resultDiv.style.background = 'rgba(100, 0, 0, 0.5)';
+            resultDiv.style.border = '1px solid #ff0000';
+            resultDiv.style.color = '#ff0000';
+            resultDiv.style.whiteSpace = 'pre-line';
+            resultDiv.style.display = 'block';
+            launchButton.disabled = false;
             showStatus(data.message, 'error');
         }
     } catch (error) {
-        showStatus('Error adding instance: ' + error.message, 'error');
+        loadingDiv.style.display = 'none';
+        resultDiv.textContent = '✗ Error\\n\\n' + error.message;
+        resultDiv.style.background = 'rgba(100, 0, 0, 0.5)';
+        resultDiv.style.border = '1px solid #ff0000';
+        resultDiv.style.color = '#ff0000';
+        resultDiv.style.whiteSpace = 'pre-line';
+        resultDiv.style.display = 'block';
+        launchButton.disabled = false;
+        showStatus('Error launching instance: ' + error.message, 'error');
     }
 }
 
