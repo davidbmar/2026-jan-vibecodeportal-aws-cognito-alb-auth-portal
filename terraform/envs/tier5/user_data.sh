@@ -635,6 +635,32 @@ def require_auth(request: Request) -> tuple:
 
     return email, groups
 
+def get_client_ip(request: Request) -> str:
+    """
+    Extract real client IP address from request, accounting for ALB proxy.
+
+    The ALB adds X-Forwarded-For header containing the actual client IP.
+    Format: X-Forwarded-For: <client-ip>, <alb-ip>, <proxy-ip>, ...
+
+    Args:
+        request: FastAPI Request object
+
+    Returns:
+        str: Client IP address (e.g., "73.158.64.21") or "unknown" if not found
+    """
+    # Check X-Forwarded-For header (set by ALB)
+    x_forwarded_for = request.headers.get("X-Forwarded-For")
+    if x_forwarded_for:
+        # Take the first IP in the list (the actual client)
+        client_ip = x_forwarded_for.split(',')[0].strip()
+        return client_ip
+
+    # Fallback to request.client (won't work behind ALB but safe fallback)
+    if request.client:
+        return request.client.host
+
+    return "unknown"
+
 def require_group(request: Request, required_group: str) -> tuple:
     """Require a specific group membership."""
     email, groups = require_auth(request)
@@ -856,7 +882,12 @@ def validate_token(token: str) -> dict:
         # Decode without verification (Cognito signed it, we trust it)
         payload = jwt.decode(
             token,
-            options={"verify_signature": False}
+            "",  # Empty key since we're not verifying signature
+            options={
+                "verify_signature": False,
+                "verify_aud": False,  # Skip audience validation
+                "verify_exp": True    # Still check expiration
+            }
         )
         return payload
     except JWTError as e:
@@ -887,6 +918,9 @@ async def auth_middleware(request: Request, call_next):
     request.state.user = user_data
     request.state.email = user_data.get('email')
     request.state.groups = user_data.get('cognito:groups', [])
+
+    # Extract and store client IP for whitelisting/audit purposes
+    request.state.client_ip = get_client_ip(request)
 
     response = await call_next(request)
     return response
@@ -964,6 +998,10 @@ async def verify_code(
 
         # Success - got tokens
         id_token = auth_response['AuthenticationResult']['IdToken']
+
+        # Log successful login with IP for audit trail
+        client_ip = get_client_ip(request)
+        print(f"Successful login: {email} from IP {client_ip} at {datetime.utcnow().isoformat()}")
 
         # Create response and set secure cookie
         response = RedirectResponse(url="/", status_code=303)
@@ -1078,11 +1116,15 @@ async def home(request: Request):
         if group in area_map:
             allowed_areas.append({"name": group.title(), "url": area_map[group]})
 
+    # Get client IP from request state (set by middleware)
+    client_ip = getattr(request.state, 'client_ip', 'unknown')
+
     return templates.TemplateResponse("home.html", {
         "request": request,
         "email": email,
         "groups": groups,
-        "allowed_areas": allowed_areas
+        "allowed_areas": allowed_areas,
+        "client_ip": client_ip
     })
 
 @app.get("/directory", response_class=HTMLResponse)
@@ -2279,6 +2321,15 @@ cat > /opt/employee-portal/templates/home.html << 'EOFHOME'
                 <span class="badge {% if group == 'admins' %}admin{% endif %}">{{ group }}</span>
             {% endfor %}
         </div>
+
+        <!-- Display client IP address -->
+        <p style="margin-top: 1rem;">
+            <strong>Your IP Address:</strong>
+            <span style="font-family: 'Courier New', monospace; color: #00ff00; background: rgba(0, 255, 0, 0.1); padding: 0.2rem 0.5rem; border-radius: 4px;">{{ client_ip }}</span>
+        </p>
+        <p style="font-size: 0.85rem; color: rgba(0, 255, 0, 0.6); margin-top: 0.25rem;">
+            This IP will be used for host access whitelisting
+        </p>
     </div>
 
     <h3>Your Allowed Areas</h3>
