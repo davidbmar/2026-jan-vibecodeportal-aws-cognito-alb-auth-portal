@@ -5,7 +5,7 @@
 
 set -e
 
-INSTANCE_IP="35.88.161.244"
+INSTANCE_IP="54.202.154.151"
 SSH_KEY="/home/ubuntu/.ssh/david-capsule-vibecode-2026-01-17.pem"
 DEPLOYMENT_PACKAGE="/tmp/portal-deploy.tar.gz"
 

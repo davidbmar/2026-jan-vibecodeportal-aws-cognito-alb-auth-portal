@@ -283,8 +283,8 @@ def ensure_ssh_security_group(vpc_id: str, portal_private_ip: str) -> Optional[s
     Creates a security group named 'vibecode-launched-instances' if it
     doesn't exist. Ensures proper ingress rules:
     - SSH (port 22): Restricted to portal host's private IP only
-    - HTTP (port 80): Open to internet (0.0.0.0/0)
-    - HTTPS (port 443): Open to internet (0.0.0.0/0)
+    - HTTP (port 80): No default rules - IPs whitelisted dynamically on login
+    - HTTPS (port 443): No default rules - IPs whitelisted dynamically on login
 
     Args:
         vpc_id: VPC ID where security group should be created
@@ -294,7 +294,7 @@ def ensure_ssh_security_group(vpc_id: str, portal_private_ip: str) -> Optional[s
         str: Security group ID if successful, None on error
     """
     sg_name = 'vibecode-launched-instances'
-    sg_description = 'SSH from portal, HTTP/HTTPS from internet'
+    sg_description = 'SSH from portal, HTTP/HTTPS dynamically whitelisted'
 
     try:
         # Check if security group already exists
@@ -314,8 +314,6 @@ def ensure_ssh_security_group(vpc_id: str, portal_private_ip: str) -> Optional[s
             existing_rules = sg.get('IpPermissions', [])
 
             ssh_rule_exists = False
-            http_rule_exists = False
-            https_rule_exists = False
 
             for rule in existing_rules:
                 if rule.get('IpProtocol') == 'tcp':
@@ -325,19 +323,7 @@ def ensure_ssh_security_group(vpc_id: str, portal_private_ip: str) -> Optional[s
                             if ip_range.get('CidrIp') == f"{portal_private_ip}/32":
                                 ssh_rule_exists = True
 
-                    # Check HTTP rule (port 80 from anywhere)
-                    if rule.get('FromPort') == 80 and rule.get('ToPort') == 80:
-                        for ip_range in rule.get('IpRanges', []):
-                            if ip_range.get('CidrIp') == '0.0.0.0/0':
-                                http_rule_exists = True
-
-                    # Check HTTPS rule (port 443 from anywhere)
-                    if rule.get('FromPort') == 443 and rule.get('ToPort') == 443:
-                        for ip_range in rule.get('IpRanges', []):
-                            if ip_range.get('CidrIp') == '0.0.0.0/0':
-                                https_rule_exists = True
-
-            # Add missing rules
+            # Add missing SSH rule only (HTTP/HTTPS added dynamically on user login)
             rules_to_add = []
 
             if not ssh_rule_exists:
@@ -347,24 +333,6 @@ def ensure_ssh_security_group(vpc_id: str, portal_private_ip: str) -> Optional[s
                     'FromPort': 22,
                     'ToPort': 22,
                     'IpRanges': [{'CidrIp': f"{portal_private_ip}/32", 'Description': 'SSH from portal host'}]
-                })
-
-            if not http_rule_exists:
-                print("Adding HTTP rule for 0.0.0.0/0")
-                rules_to_add.append({
-                    'IpProtocol': 'tcp',
-                    'FromPort': 80,
-                    'ToPort': 80,
-                    'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'HTTP from internet'}]
-                })
-
-            if not https_rule_exists:
-                print("Adding HTTPS rule for 0.0.0.0/0")
-                rules_to_add.append({
-                    'IpProtocol': 'tcp',
-                    'FromPort': 443,
-                    'ToPort': 443,
-                    'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'HTTPS from internet'}]
                 })
 
             if rules_to_add:
@@ -393,7 +361,7 @@ def ensure_ssh_security_group(vpc_id: str, portal_private_ip: str) -> Optional[s
         sg_id = create_response['GroupId']
         print(f"Created security group: {sg_id}")
 
-        # Add all ingress rules
+        # Add SSH ingress rule only (HTTP/HTTPS added dynamically on user login)
         ec2_client.authorize_security_group_ingress(
             GroupId=sg_id,
             IpPermissions=[
@@ -402,23 +370,11 @@ def ensure_ssh_security_group(vpc_id: str, portal_private_ip: str) -> Optional[s
                     'FromPort': 22,
                     'ToPort': 22,
                     'IpRanges': [{'CidrIp': f"{portal_private_ip}/32", 'Description': 'SSH from portal host'}]
-                },
-                {
-                    'IpProtocol': 'tcp',
-                    'FromPort': 80,
-                    'ToPort': 80,
-                    'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'HTTP from internet'}]
-                },
-                {
-                    'IpProtocol': 'tcp',
-                    'FromPort': 443,
-                    'ToPort': 443,
-                    'IpRanges': [{'CidrIp': '0.0.0.0/0', 'Description': 'HTTPS from internet'}]
                 }
             ]
         )
 
-        print(f"Added SSH, HTTP, and HTTPS rules")
+        print(f"Added SSH rule (HTTP/HTTPS will be added dynamically on user login)")
         return sg_id
 
     except Exception as e:
@@ -708,6 +664,81 @@ def get_instances_by_tag(tag_key: str = "VibeCodeArea", tag_value: Optional[str]
         print(f"Error fetching EC2 instances: {e}")
         return []
 
+def get_instance_security_groups(instance_id: str) -> list:
+    """
+    Get detailed security group information for an EC2 instance.
+
+    Args:
+        instance_id: EC2 instance ID (e.g., 'i-0abc123def456')
+
+    Returns:
+        list: Security group details with IpPermissions
+    """
+    try:
+        # Get instance details
+        response = ec2_client.describe_instances(InstanceIds=[instance_id])
+
+        if not response['Reservations']:
+            return []
+
+        instance = response['Reservations'][0]['Instances'][0]
+        sg_ids = [sg['GroupId'] for sg in instance.get('SecurityGroups', [])]
+
+        if not sg_ids:
+            return []
+
+        # Get security group details with rules
+        sg_response = ec2_client.describe_security_groups(GroupIds=sg_ids)
+        return sg_response['SecurityGroups']
+
+    except Exception as e:
+        print(f"Error fetching security groups for {instance_id}: {e}")
+        return []
+
+def check_port_whitelisted(instance_id: str, port: int, client_ip: str) -> bool:
+    """
+    Check if a client IP is whitelisted for a specific port on an instance.
+
+    Args:
+        instance_id: EC2 instance ID
+        port: Port number to check (e.g., 80, 443)
+        client_ip: Client IP address (e.g., '73.158.64.21')
+
+    Returns:
+        bool: True if whitelisted (including 0.0.0.0/0), False otherwise
+    """
+    try:
+        security_groups = get_instance_security_groups(instance_id)
+
+        for sg in security_groups:
+            for permission in sg.get('IpPermissions', []):
+                # Check if rule applies to this port
+                from_port = permission.get('FromPort', 0)
+                to_port = permission.get('ToPort', 0)
+                protocol = permission.get('IpProtocol', '')
+
+                # Skip if not TCP or port not in range
+                if protocol != 'tcp' or not (from_port <= port <= to_port):
+                    continue
+
+                # Check CIDR blocks
+                for ip_range in permission.get('IpRanges', []):
+                    cidr = ip_range.get('CidrIp', '')
+
+                    # Open to all
+                    if cidr == '0.0.0.0/0':
+                        return True
+
+                    # Exact IP match (with or without /32)
+                    if cidr == client_ip or cidr == f"{client_ip}/32":
+                        return True
+
+        return False
+
+    except Exception as e:
+        print(f"Error checking port whitelist for {instance_id} port {port}: {e}")
+        return False
+
 def get_instance_by_area(area: str) -> Optional[dict]:
     """Get the EC2 instance mapped to a specific area."""
     instances = get_instances_by_tag(tag_value=area)
@@ -747,6 +778,343 @@ def tag_instance(instance_id: str, area: str) -> tuple:
 def build_ssm_url(instance_id: str) -> str:
     """Generate AWS Systems Manager Session Manager URL for an instance."""
     return f"https://console.aws.amazon.com/systems-manager/session-manager/{instance_id}?region={AWS_REGION}"
+
+# ============================================================================
+# IP WHITELIST MANAGEMENT
+# ============================================================================
+# Functions for dynamic IP whitelisting on security groups.
+# Users' IPs are whitelisted on login based on their Cognito group membership.
+
+def get_user_whitelisted_ip(email: str) -> Optional[str]:
+    """
+    Get currently whitelisted IP for a user by scanning security group rule descriptions.
+
+    Searches the vibecode-launched-instances security group for rules with
+    descriptions containing the user's email address.
+
+    Args:
+        email: User's email address
+
+    Returns:
+        Current whitelisted IP or None if not found
+    """
+    try:
+        # Get the vibecode-launched-instances security group
+        response = ec2_client.describe_security_groups(
+            Filters=[
+                {'Name': 'group-name', 'Values': ['vibecode-launched-instances']}
+            ]
+        )
+
+        if not response['SecurityGroups']:
+            return None
+
+        sg = response['SecurityGroups'][0]
+
+        # Scan all rules for user email in description
+        for permission in sg.get('IpPermissions', []):
+            for ip_range in permission.get('IpRanges', []):
+                description = ip_range.get('Description', '')
+
+                # Parse description format: "User: email@capsule.com | IP: 73.158.64.21 | Port: 80 | Added: 2026-01-28T10:30:00Z"
+                if f"User: {email}" in description:
+                    # Extract IP from description
+                    parts = description.split('|')
+                    for part in parts:
+                        if 'IP:' in part:
+                            ip = part.split('IP:')[1].strip()
+                            return ip
+
+        return None
+
+    except Exception as e:
+        print(f"Error getting whitelisted IP for {email}: {e}")
+        return None
+
+
+def add_ip_to_security_group(sg_id: str, port: int, ip: str, description: str) -> bool:
+    """
+    Add IP whitelist rule to security group.
+    Idempotent - handles duplicate rule errors gracefully.
+
+    Args:
+        sg_id: Security group ID
+        port: Port number (80 or 443)
+        ip: IP address to whitelist
+        description: Rule description containing user metadata
+
+    Returns:
+        True if rule added or already exists, False on error
+    """
+    try:
+        ec2_client.authorize_security_group_ingress(
+            GroupId=sg_id,
+            IpPermissions=[{
+                'IpProtocol': 'tcp',
+                'FromPort': port,
+                'ToPort': port,
+                'IpRanges': [{
+                    'CidrIp': f"{ip}/32",
+                    'Description': description
+                }]
+            }]
+        )
+        return True
+    except Exception as e:
+        error_msg = str(e).lower()
+        if 'already exists' in error_msg or 'duplicate' in error_msg:
+            return True  # Idempotent - rule already exists
+        print(f"Error adding IP rule to {sg_id} port {port}: {e}")
+        return False
+
+
+def remove_ip_from_security_group(sg_id: str, port: int, ip: str) -> bool:
+    """
+    Remove IP whitelist rule from security group.
+    Idempotent - handles non-existent rule errors gracefully.
+
+    Args:
+        sg_id: Security group ID
+        port: Port number (80 or 443)
+        ip: IP address to remove
+
+    Returns:
+        True if rule removed or doesn't exist, False on error
+    """
+    try:
+        ec2_client.revoke_security_group_ingress(
+            GroupId=sg_id,
+            IpPermissions=[{
+                'IpProtocol': 'tcp',
+                'FromPort': port,
+                'ToPort': port,
+                'IpRanges': [{
+                    'CidrIp': f"{ip}/32"
+                }]
+            }]
+        )
+        return True
+    except Exception as e:
+        error_msg = str(e).lower()
+        if 'does not exist' in error_msg or 'not found' in error_msg:
+            return True  # Idempotent - rule doesn't exist
+        print(f"Error removing IP rule from {sg_id} port {port}: {e}")
+        return False
+
+
+def get_instances_for_user_groups(groups: list) -> list:
+    """
+    Get all unique EC2 instances matching user's Cognito groups.
+    Filters to valid areas, deduplicates instance IDs.
+
+    Args:
+        groups: List of Cognito group names
+
+    Returns:
+        List of unique instance dicts with keys: instance_id, area, public_ip, etc.
+    """
+    valid_areas = ['engineering', 'hr', 'automation', 'product']
+    area_groups = [g for g in groups if g in valid_areas]
+
+    instances = []
+    seen_ids = set()
+
+    for area in area_groups:
+        area_instances = get_instances_by_tag(tag_value=area)
+        for inst in area_instances:
+            if inst['instance_id'] not in seen_ids:
+                instances.append(inst)
+                seen_ids.add(inst['instance_id'])
+
+    return instances
+
+
+def whitelist_user_ip_on_instances(email: str, groups: list, client_ip: str) -> dict:
+    """
+    Whitelist user's IP on all instances matching their Cognito groups.
+
+    Process:
+    1. Get old IP for this user (if exists)
+    2. Filter groups to valid areas (engineering, hr, automation, product)
+    3. For each group, get matching instances via get_instances_by_tag()
+    4. For each instance:
+       - Get security group ID
+       - Remove old IP rules if IP changed
+       - Add new IP rules with descriptive description
+
+    Args:
+        email: User's email address
+        groups: User's Cognito groups
+        client_ip: User's current IP address
+
+    Returns:
+        dict with keys:
+            - success: bool (True if at least partial success)
+            - instances_updated: list of instance IDs successfully updated
+            - instances_failed: list of instance IDs that failed
+            - old_ip_removed: str or None (old IP if it was replaced)
+            - errors: list of error messages
+    """
+    result = {
+        'success': False,
+        'instances_updated': [],
+        'instances_failed': [],
+        'old_ip_removed': None,
+        'errors': []
+    }
+
+    try:
+        # Get old IP for this user
+        old_ip = get_user_whitelisted_ip(email)
+        ip_changed = old_ip and old_ip != client_ip
+
+        if ip_changed:
+            result['old_ip_removed'] = old_ip
+
+        # Get instances matching user's groups
+        instances = get_instances_for_user_groups(groups)
+
+        if not instances:
+            result['errors'].append(f"No instances found for groups: {groups}")
+            return result
+
+        # Process each instance
+        for instance in instances:
+            instance_id = instance['instance_id']
+            area = instance.get('area', 'unknown')
+
+            try:
+                # Get instance security groups
+                security_groups = get_instance_security_groups(instance_id)
+
+                if not security_groups:
+                    result['instances_failed'].append(instance_id)
+                    result['errors'].append(f"{instance_id}: No security groups found")
+                    continue
+
+                # Find the vibecode-launched-instances security group
+                sg_id = None
+                for sg in security_groups:
+                    if sg.get('GroupName') == 'vibecode-launched-instances':
+                        sg_id = sg['GroupId']
+                        break
+
+                if not sg_id:
+                    result['instances_failed'].append(instance_id)
+                    result['errors'].append(f"{instance_id}: vibecode-launched-instances SG not found")
+                    continue
+
+                # Remove old IP rules if IP changed
+                if ip_changed:
+                    for port in [80, 443]:
+                        remove_ip_from_security_group(sg_id, port, old_ip)
+
+                # Add new IP rules for ports 80 and 443
+                timestamp = datetime.utcnow().isoformat()
+                success_count = 0
+
+                for port in [80, 443]:
+                    description = f"User: {email} | IP: {client_ip} | Port: {port} | Added: {timestamp}"
+                    if add_ip_to_security_group(sg_id, port, client_ip, description):
+                        success_count += 1
+                    else:
+                        result['errors'].append(f"{instance_id}: Failed to add rule for port {port}")
+
+                # Consider success if at least one port was whitelisted
+                if success_count > 0:
+                    result['instances_updated'].append(instance_id)
+                else:
+                    result['instances_failed'].append(instance_id)
+
+            except Exception as e:
+                result['instances_failed'].append(instance_id)
+                result['errors'].append(f"{instance_id}: {str(e)}")
+
+        # Success if at least one instance was updated
+        result['success'] = len(result['instances_updated']) > 0
+        return result
+
+    except Exception as e:
+        result['errors'].append(f"Whitelist operation failed: {str(e)}")
+        return result
+
+
+def remove_user_ip_from_instances(email: str, instance_ids: list) -> dict:
+    """
+    Remove user's IP whitelist rules from specified instances.
+    Used for admin cleanup when user removed from groups.
+
+    Args:
+        email: User's email address
+        instance_ids: List of instance IDs to remove IP from
+
+    Returns:
+        dict with keys:
+            - success: bool
+            - instances_updated: list of instance IDs
+            - instances_failed: list of instance IDs
+            - errors: list of error messages
+    """
+    result = {
+        'success': False,
+        'instances_updated': [],
+        'instances_failed': [],
+        'errors': []
+    }
+
+    try:
+        # Get user's current IP
+        user_ip = get_user_whitelisted_ip(email)
+
+        if not user_ip:
+            result['errors'].append(f"No whitelisted IP found for {email}")
+            return result
+
+        # Process each instance
+        for instance_id in instance_ids:
+            try:
+                # Get instance security groups
+                security_groups = get_instance_security_groups(instance_id)
+
+                if not security_groups:
+                    result['instances_failed'].append(instance_id)
+                    result['errors'].append(f"{instance_id}: No security groups found")
+                    continue
+
+                # Find the vibecode-launched-instances security group
+                sg_id = None
+                for sg in security_groups:
+                    if sg.get('GroupName') == 'vibecode-launched-instances':
+                        sg_id = sg['GroupId']
+                        break
+
+                if not sg_id:
+                    result['instances_failed'].append(instance_id)
+                    result['errors'].append(f"{instance_id}: vibecode-launched-instances SG not found")
+                    continue
+
+                # Remove IP rules for ports 80 and 443
+                success_count = 0
+                for port in [80, 443]:
+                    if remove_ip_from_security_group(sg_id, port, user_ip):
+                        success_count += 1
+
+                # Consider success if at least one port was removed
+                if success_count > 0:
+                    result['instances_updated'].append(instance_id)
+                else:
+                    result['instances_failed'].append(instance_id)
+
+            except Exception as e:
+                result['instances_failed'].append(instance_id)
+                result['errors'].append(f"{instance_id}: {str(e)}")
+
+        result['success'] = len(result['instances_updated']) > 0
+        return result
+
+    except Exception as e:
+        result['errors'].append(f"Remove operation failed: {str(e)}")
+        return result
 
 # ============================================================================
 # COGNITO USER MANAGEMENT
@@ -1002,6 +1370,33 @@ async def verify_code(
         # Log successful login with IP for audit trail
         client_ip = get_client_ip(request)
         print(f"Successful login: {email} from IP {client_ip} at {datetime.utcnow().isoformat()}")
+
+        # Whitelist user IP on their group instances
+        try:
+            # Decode JWT to get groups
+            user_data = jwt.decode(
+                id_token, "",
+                options={"verify_signature": False, "verify_aud": False, "verify_exp": True}
+            )
+            user_groups = user_data.get('cognito:groups', [])
+
+            # Whitelist IP on matching instances
+            whitelist_result = whitelist_user_ip_on_instances(email, user_groups, client_ip)
+
+            if whitelist_result['success']:
+                print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | USER: {email} | IP: {client_ip} | INSTANCES: {len(whitelist_result['instances_updated'])} | STATUS: success")
+                if whitelist_result.get('old_ip_removed'):
+                    print(f"  Replaced old IP: {whitelist_result['old_ip_removed']}")
+            else:
+                print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | USER: {email} | IP: {client_ip} | STATUS: partial_failure")
+                print(f"  Updated: {len(whitelist_result['instances_updated'])}, Failed: {len(whitelist_result['instances_failed'])}")
+                for error in whitelist_result.get('errors', []):
+                    print(f"  Error: {error}")
+
+        except Exception as e:
+            # Don't fail login on whitelist errors - log and continue
+            print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | USER: {email} | IP: {client_ip} | STATUS: error | ERROR: {e}")
+            print("WARNING: User can login but may not have instance access. Admin review needed.")
 
         # Create response and set secure cookie
         response = RedirectResponse(url="/", status_code=303)
@@ -1488,6 +1883,297 @@ async def delete_user(request: Request):
         timestamp = int(time_module.time())
         return RedirectResponse(url=f"/admin?error={str(e)}&t={timestamp}", status_code=303)
 
+# IP Whitelist Management Routes (Admin Only)
+@app.get("/admin/ip-whitelist-audit")
+async def audit_ip_whitelist(request: Request):
+    """
+    Audit IP whitelist rules and identify orphaned rules.
+
+    Returns all security group rules with user descriptions, cross-referenced
+    with current Cognito user group memberships.
+
+    Returns:
+        JSON with current rules, orphaned rules, users by IP
+    """
+    email, groups = require_auth(request)
+    if 'admins' not in groups:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        # Get the vibecode-launched-instances security group
+        response = ec2_client.describe_security_groups(
+            Filters=[
+                {'Name': 'group-name', 'Values': ['vibecode-launched-instances']}
+            ]
+        )
+
+        if not response['SecurityGroups']:
+            return JSONResponse({
+                'success': False,
+                'error': 'vibecode-launched-instances security group not found'
+            })
+
+        sg = response['SecurityGroups'][0]
+        sg_id = sg['GroupId']
+
+        # Parse all rules to extract user information
+        current_rules = []
+        users_seen = set()
+
+        for permission in sg.get('IpPermissions', []):
+            protocol = permission.get('IpProtocol', '')
+            from_port = permission.get('FromPort', 0)
+            to_port = permission.get('ToPort', 0)
+
+            for ip_range in permission.get('IpRanges', []):
+                description = ip_range.get('Description', '')
+                cidr = ip_range.get('CidrIp', '')
+
+                # Parse user email from description
+                if 'User:' in description:
+                    # Format: "User: email@capsule.com | IP: 73.158.64.21 | Port: 80 | Added: 2026-01-28T10:30:00Z"
+                    try:
+                        user_email = description.split('User:')[1].split('|')[0].strip()
+                        ip = description.split('IP:')[1].split('|')[0].strip()
+                        port = description.split('Port:')[1].split('|')[0].strip()
+                        added = description.split('Added:')[1].strip() if 'Added:' in description else 'Unknown'
+
+                        users_seen.add(user_email)
+
+                        current_rules.append({
+                            'email': user_email,
+                            'ip': ip,
+                            'port': port,
+                            'cidr': cidr,
+                            'added': added,
+                            'description': description
+                        })
+                    except Exception as parse_error:
+                        # Unparseable description - include as-is
+                        current_rules.append({
+                            'email': 'Unknown',
+                            'ip': cidr.replace('/32', ''),
+                            'port': str(from_port),
+                            'cidr': cidr,
+                            'added': 'Unknown',
+                            'description': description
+                        })
+
+        # Get current Cognito users and their groups
+        cognito_users = list_cognito_users()
+
+        # Identify orphaned rules (user not in matching groups anymore)
+        orphaned_rules = []
+        valid_rules = []
+
+        for rule in current_rules:
+            rule_email = rule['email']
+
+            # Find user in Cognito
+            user_found = None
+            for user in cognito_users:
+                if user['email'] == rule_email:
+                    user_found = user
+                    break
+
+            if not user_found:
+                # User doesn't exist in Cognito - orphaned
+                rule['orphan_reason'] = 'User not found in Cognito'
+                orphaned_rules.append(rule)
+            else:
+                # Check if user still has appropriate group membership
+                user_groups = user_found.get('groups', [])
+                valid_areas = ['engineering', 'hr', 'automation', 'product']
+                has_area_group = any(g in valid_areas for g in user_groups)
+
+                if not has_area_group:
+                    rule['orphan_reason'] = 'User has no area group memberships'
+                    orphaned_rules.append(rule)
+                else:
+                    valid_rules.append(rule)
+
+        return JSONResponse({
+            'success': True,
+            'security_group_id': sg_id,
+            'total_rules': len(current_rules),
+            'valid_rules': len(valid_rules),
+            'orphaned_rules': len(orphaned_rules),
+            'current_rules': current_rules,
+            'orphaned': orphaned_rules,
+            'valid': valid_rules,
+            'users_with_ips': list(users_seen)
+        })
+
+    except Exception as e:
+        return JSONResponse({
+            'success': False,
+            'error': str(e)
+        }, status_code=500)
+
+
+@app.post("/admin/cleanup-user-ip")
+async def cleanup_user_ip(request: Request):
+    """
+    Remove IP whitelist rules for a specific user.
+    Used when admin wants to revoke user's instance access.
+    """
+    email, groups = require_auth(request)
+    if 'admins' not in groups:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        data = await request.json()
+        target_email = data.get('email')
+
+        if not target_email:
+            return JSONResponse({
+                'success': False,
+                'error': 'Email parameter required'
+            }, status_code=400)
+
+        # Get the vibecode-launched-instances security group
+        response = ec2_client.describe_security_groups(
+            Filters=[
+                {'Name': 'group-name', 'Values': ['vibecode-launched-instances']}
+            ]
+        )
+
+        if not response['SecurityGroups']:
+            return JSONResponse({
+                'success': False,
+                'error': 'vibecode-launched-instances security group not found'
+            })
+
+        sg = response['SecurityGroups'][0]
+        sg_id = sg['GroupId']
+
+        # Find all rules for this user
+        rules_to_remove = []
+
+        for permission in sg.get('IpPermissions', []):
+            from_port = permission.get('FromPort', 0)
+            to_port = permission.get('ToPort', 0)
+
+            for ip_range in permission.get('IpRanges', []):
+                description = ip_range.get('Description', '')
+
+                if f"User: {target_email}" in description:
+                    # Extract IP from CIDR
+                    cidr = ip_range.get('CidrIp', '')
+                    ip = cidr.replace('/32', '')
+
+                    rules_to_remove.append({
+                        'port': from_port,
+                        'ip': ip,
+                        'cidr': cidr
+                    })
+
+        # Remove rules
+        removed_count = 0
+        errors = []
+
+        for rule in rules_to_remove:
+            if remove_ip_from_security_group(sg_id, rule['port'], rule['ip']):
+                removed_count += 1
+            else:
+                errors.append(f"Failed to remove {rule['ip']} port {rule['port']}")
+
+        # Log cleanup action
+        print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | ACTION: admin_cleanup | ADMIN: {email} | TARGET: {target_email} | RULES_REMOVED: {removed_count}")
+
+        return JSONResponse({
+            'success': removed_count > 0,
+            'rules_removed': removed_count,
+            'rules_found': len(rules_to_remove),
+            'errors': errors
+        })
+
+    except Exception as e:
+        return JSONResponse({
+            'success': False,
+            'error': str(e)
+        }, status_code=500)
+
+
+@app.post("/admin/cleanup-orphaned-ips")
+async def cleanup_orphaned_ips(request: Request):
+    """
+    Cleanup IP whitelist rules for users no longer in matching groups.
+    This is the PRIMARY group removal cleanup mechanism.
+    """
+    email, groups = require_auth(request)
+    if 'admins' not in groups:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    try:
+        # First, run audit to identify orphaned rules
+        audit_response = await audit_ip_whitelist(request)
+        audit_data = json.loads(audit_response.body.decode())
+
+        if not audit_data.get('success'):
+            return JSONResponse({
+                'success': False,
+                'error': 'Failed to audit IP whitelist'
+            })
+
+        orphaned_rules = audit_data.get('orphaned', [])
+
+        if not orphaned_rules:
+            return JSONResponse({
+                'success': True,
+                'message': 'No orphaned rules found',
+                'rules_removed': 0
+            })
+
+        # Get security group
+        response = ec2_client.describe_security_groups(
+            Filters=[
+                {'Name': 'group-name', 'Values': ['vibecode-launched-instances']}
+            ]
+        )
+
+        if not response['SecurityGroups']:
+            return JSONResponse({
+                'success': False,
+                'error': 'vibecode-launched-instances security group not found'
+            })
+
+        sg_id = response['SecurityGroups'][0]['GroupId']
+
+        # Remove each orphaned rule
+        removed_count = 0
+        errors = []
+
+        for rule in orphaned_rules:
+            try:
+                ip = rule['ip']
+                port = int(rule['port'])
+
+                if remove_ip_from_security_group(sg_id, port, ip):
+                    removed_count += 1
+                    print(f"  Removed {rule['email']} - {ip}:{port} - {rule.get('orphan_reason', 'unknown reason')}")
+                else:
+                    errors.append(f"Failed to remove {ip}:{port}")
+
+            except Exception as rule_error:
+                errors.append(f"Error removing {rule.get('email', 'unknown')}: {str(rule_error)}")
+
+        # Log cleanup action
+        print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | ACTION: cleanup_orphaned | ADMIN: {email} | RULES_REMOVED: {removed_count} | RULES_FOUND: {len(orphaned_rules)}")
+
+        return JSONResponse({
+            'success': removed_count > 0,
+            'rules_removed': removed_count,
+            'orphaned_found': len(orphaned_rules),
+            'errors': errors
+        })
+
+    except Exception as e:
+        return JSONResponse({
+            'success': False,
+            'error': str(e)
+        }, status_code=500)
+
 # EC2 Resources Management Routes
 @app.get("/ec2-resources", response_class=HTMLResponse)
 async def ec2_resources_page(request: Request):
@@ -1502,11 +2188,25 @@ async def ec2_resources_page(request: Request):
 
 @app.get("/api/ec2/instances")
 async def get_ec2_instances_api(request: Request):
-    """API endpoint to get EC2 instances with VibeCodeArea tag (available to all authenticated users)."""
+    """API endpoint to get EC2 instances with VibeCodeArea tag and whitelist status."""
     email, groups = require_auth(request)
 
+    # Get client IP
+    client_ip = get_client_ip(request)
+
+    # Get instances
     instances = get_instances_by_tag()
-    return {"instances": instances}
+
+    # Enhance each instance with whitelist status
+    for instance in instances:
+        instance_id = instance['instance_id']
+        instance['port_80_whitelisted'] = check_port_whitelisted(instance_id, 80, client_ip)
+        instance['port_443_whitelisted'] = check_port_whitelisted(instance_id, 443, client_ip)
+
+    return {
+        "client_ip": client_ip,
+        "instances": instances
+    }
 
 @app.post("/api/ec2/tag-instance")
 async def tag_ec2_instance_api(request: Request):
@@ -3108,6 +3808,30 @@ cat > /opt/employee-portal/templates/admin_panel.html << 'EOFADMIN'
             </tbody>
         </table>
 
+        <!-- IP Whitelist Management Section -->
+        <div style="margin-top: 3rem; padding-top: 2rem; border-top: 2px solid rgba(0, 255, 0, 0.3);">
+            <h3 style="color: #00ff00; margin-bottom: 1rem;">🔒 IP WHITELIST MANAGEMENT</h3>
+            <p style="margin-bottom: 1.5rem; opacity: 0.8;">
+                Manage dynamic IP whitelisting rules. Users' IPs are automatically whitelisted on login based on their Cognito group membership.
+            </p>
+
+            <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+                <button onclick="auditIPWhitelist()"
+                        style="background: rgba(0, 100, 255, 0.2); border: 2px solid #00aaff; color: #00aaff; padding: 0.8rem 1.5rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-size: 0.85rem; font-weight: 700; text-transform: uppercase;">
+                    🔍 AUDIT IP WHITELIST
+                </button>
+
+                <button onclick="cleanupOrphanedIPs()"
+                        style="background: rgba(255, 100, 0, 0.2); border: 2px solid #ff6600; color: #ff6600; padding: 0.8rem 1.5rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-size: 0.85rem; font-weight: 700; text-transform: uppercase;">
+                    🧹 CLEANUP ORPHANED IPS
+                </button>
+            </div>
+
+            <div id="whitelist-audit-results" style="display: none; margin-top: 1rem; padding: 1rem; background: rgba(0, 0, 0, 0.5); border: 1px solid #444;">
+                <!-- Results displayed here -->
+            </div>
+        </div>
+
         <div class="nav-links" style="margin-top: 3rem;">
             <a href="/">← RETURN TO HOME</a>
         </div>
@@ -3289,6 +4013,235 @@ window.addEventListener('DOMContentLoaded', function() {
         }
     }
 });
+
+// IP Whitelist Management Functions
+async function auditIPWhitelist() {
+    const resultsDiv = document.getElementById('whitelist-audit-results');
+    resultsDiv.style.display = 'block';
+    resultsDiv.textContent = 'Loading audit data...';
+
+    try {
+        const response = await fetch('/admin/ip-whitelist-audit');
+        const data = await response.json();
+
+        if (!data.success) {
+            resultsDiv.textContent = 'Error: ' + data.error;
+            return;
+        }
+
+        // Build report with safe DOM methods
+        resultsDiv.innerHTML = '';
+
+        const title = document.createElement('h4');
+        title.style.color = '#00aaff';
+        title.style.marginBottom = '1rem';
+        title.textContent = 'IP WHITELIST AUDIT REPORT';
+        resultsDiv.appendChild(title);
+
+        // Summary stats
+        const statsGrid = document.createElement('div');
+        statsGrid.style.cssText = 'display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem;';
+
+        const stats = [
+            { value: data.total_rules, label: 'Total Rules', color: '#00ff00' },
+            { value: data.valid_rules, label: 'Valid Rules', color: '#00ff00' },
+            { value: data.orphaned_rules, label: 'Orphaned Rules', color: '#ff6600' },
+            { value: data.users_with_ips.length, label: 'Unique Users', color: '#00aaff' }
+        ];
+
+        stats.forEach(stat => {
+            const statBox = document.createElement('div');
+            statBox.style.cssText = 'background: rgba(0, 255, 0, 0.1); border: 1px solid ' + stat.color + '; padding: 1rem;';
+
+            const valueDiv = document.createElement('div');
+            valueDiv.style.cssText = 'font-size: 1.5rem; color: ' + stat.color;
+            valueDiv.textContent = stat.value;
+
+            const labelDiv = document.createElement('div');
+            labelDiv.style.cssText = 'font-size: 0.8rem; opacity: 0.8;';
+            labelDiv.textContent = stat.label;
+
+            statBox.appendChild(valueDiv);
+            statBox.appendChild(labelDiv);
+            statsGrid.appendChild(statBox);
+        });
+
+        resultsDiv.appendChild(statsGrid);
+
+        // Display orphaned rules if found
+        if (data.orphaned_rules > 0) {
+            const warningBox = document.createElement('div');
+            warningBox.style.cssText = 'background: rgba(255, 100, 0, 0.2); border: 1px solid #ff6600; padding: 1rem; margin-bottom: 1rem;';
+
+            const warningTitle = document.createElement('h5');
+            warningTitle.style.cssText = 'color: #ff6600; margin-bottom: 0.5rem;';
+            warningTitle.textContent = '⚠ ORPHANED RULES FOUND';
+
+            const warningText = document.createElement('p');
+            warningText.style.fontSize = '0.9rem';
+            warningText.textContent = 'These rules belong to users who no longer have area group memberships.';
+
+            warningBox.appendChild(warningTitle);
+            warningBox.appendChild(warningText);
+            resultsDiv.appendChild(warningBox);
+
+            // Create orphaned rules table
+            const table = createRulesTable(data.orphaned, true);
+            resultsDiv.appendChild(table);
+        } else {
+            const successBox = document.createElement('div');
+            successBox.style.cssText = 'background: rgba(0, 255, 0, 0.2); border: 1px solid #00ff00; padding: 1rem;';
+
+            const successText = document.createElement('p');
+            successText.style.color = '#00ff00';
+            successText.textContent = '✓ No orphaned rules found. All IP whitelist rules are valid.';
+
+            successBox.appendChild(successText);
+            resultsDiv.appendChild(successBox);
+        }
+
+        // Display valid rules
+        if (data.valid_rules > 0) {
+            const validTitle = document.createElement('h5');
+            validTitle.style.cssText = 'color: #00ff00; margin-top: 2rem; margin-bottom: 0.5rem;';
+            validTitle.textContent = 'VALID RULES (' + data.valid_rules + ')';
+            resultsDiv.appendChild(validTitle);
+
+            const table = createRulesTable(data.valid, false);
+            resultsDiv.appendChild(table);
+        }
+
+    } catch (error) {
+        resultsDiv.textContent = 'Error: ' + error.message;
+    }
+}
+
+function createRulesTable(rules, showOrphanReason) {
+    const table = document.createElement('table');
+    table.style.cssText = 'width: 100%; margin-top: 1rem; font-size: 0.85rem;';
+
+    const thead = document.createElement('thead');
+    const headerRow = document.createElement('tr');
+
+    const headers = ['USER', 'IP', 'PORT'];
+    if (showOrphanReason) headers.push('REASON');
+    headers.push('ADDED');
+
+    headers.forEach(headerText => {
+        const th = document.createElement('th');
+        th.textContent = headerText;
+        headerRow.appendChild(th);
+    });
+
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+
+    rules.forEach(rule => {
+        const row = document.createElement('tr');
+
+        const emailCell = document.createElement('td');
+        emailCell.textContent = rule.email;
+        row.appendChild(emailCell);
+
+        const ipCell = document.createElement('td');
+        ipCell.style.fontFamily = 'monospace';
+        ipCell.textContent = rule.ip;
+        row.appendChild(ipCell);
+
+        const portCell = document.createElement('td');
+        portCell.textContent = rule.port;
+        row.appendChild(portCell);
+
+        if (showOrphanReason) {
+            const reasonCell = document.createElement('td');
+            reasonCell.style.cssText = 'color: #ff6600; font-size: 0.8rem;';
+            reasonCell.textContent = rule.orphan_reason;
+            row.appendChild(reasonCell);
+        }
+
+        const addedCell = document.createElement('td');
+        addedCell.style.cssText = 'font-size: 0.8rem; opacity: 0.7;';
+        addedCell.textContent = rule.added;
+        row.appendChild(addedCell);
+
+        tbody.appendChild(row);
+    });
+
+    table.appendChild(tbody);
+    return table;
+}
+
+async function cleanupOrphanedIPs() {
+    if (!confirm('Remove IP whitelist rules for users no longer in matching groups?\\n\\nThis will revoke instance access for affected users.')) {
+        return;
+    }
+
+    const resultsDiv = document.getElementById('whitelist-audit-results');
+    resultsDiv.style.display = 'block';
+    resultsDiv.textContent = 'Cleaning up orphaned IPs...';
+
+    try {
+        const response = await fetch('/admin/cleanup-orphaned-ips', { method: 'POST' });
+        const data = await response.json();
+
+        resultsDiv.innerHTML = '';
+
+        if (!data.success) {
+            const errorMsg = document.createElement('p');
+            errorMsg.style.color = '#ff0000';
+            errorMsg.textContent = 'Error: ' + data.error;
+            resultsDiv.appendChild(errorMsg);
+            return;
+        }
+
+        const successBox = document.createElement('div');
+        successBox.style.cssText = 'background: rgba(0, 255, 0, 0.2); border: 1px solid #00ff00; padding: 1rem; margin-bottom: 1rem;';
+
+        const successTitle = document.createElement('h4');
+        successTitle.style.cssText = 'color: #00ff00; margin-bottom: 0.5rem;';
+        successTitle.textContent = '✓ CLEANUP COMPLETE';
+
+        const successText = document.createElement('p');
+        successText.textContent = 'Removed ' + data.rules_removed + ' orphaned IP whitelist rules.';
+
+        successBox.appendChild(successTitle);
+        successBox.appendChild(successText);
+        resultsDiv.appendChild(successBox);
+
+        if (data.errors && data.errors.length > 0) {
+            const errorBox = document.createElement('div');
+            errorBox.style.cssText = 'background: rgba(255, 100, 0, 0.2); border: 1px solid #ff6600; padding: 1rem;';
+
+            const errorTitle = document.createElement('h5');
+            errorTitle.style.color = '#ff6600';
+            errorTitle.textContent = 'Errors:';
+            errorBox.appendChild(errorTitle);
+
+            const errorList = document.createElement('ul');
+            errorList.style.marginTop = '0.5rem';
+
+            data.errors.forEach(err => {
+                const li = document.createElement('li');
+                li.style.fontSize = '0.85rem';
+                li.textContent = err;
+                errorList.appendChild(li);
+            });
+
+            errorBox.appendChild(errorList);
+            resultsDiv.appendChild(errorBox);
+        }
+
+        // Refresh audit after cleanup
+        setTimeout(() => {
+            auditIPWhitelist();
+        }, 2000);
+
+    } catch (error) {
+        resultsDiv.textContent = 'Error: ' + error.message;
+    }
+}
 </script>
 {% endblock %}
 EOFADMIN
@@ -3331,6 +4284,10 @@ cat > /opt/employee-portal/templates/ec2_resources.html << 'EOFEC2'
             </button>
         </div>
 
+        <div id="client-ip-banner" style="display: none; background: rgba(0, 50, 100, 0.3); border: 1px solid #00aaff; color: #00aaff; padding: 1rem; margin: 2rem 0; font-family: 'Source Code Pro', monospace;">
+            <strong>YOUR CLIENT IP:</strong> <span id="client-ip-value" style="color: #00ff00; font-weight: bold;">Loading...</span>
+        </div>
+
         <h3 style="color: #00ff00; margin-top: 2rem; margin-bottom: 1rem;">MANAGED INSTANCES</h3>
 
         <div id="loading" style="text-align: center; padding: 2rem; color: #00ff00;">
@@ -3347,6 +4304,8 @@ cat > /opt/employee-portal/templates/ec2_resources.html << 'EOFEC2'
                     <th>PRIVATE IP</th>
                     <th>AREA</th>
                     <th>STATE</th>
+                    <th>PORT 80</th>
+                    <th>PORT 443</th>
                 </tr>
             </thead>
             <tbody id="instances-tbody">
@@ -3435,6 +4394,12 @@ async function refreshInstances() {
         const response = await fetch('/api/ec2/instances');
         const data = await response.json();
 
+        // Display client IP
+        if (data.client_ip) {
+            document.getElementById('client-ip-value').textContent = data.client_ip;
+            document.getElementById('client-ip-banner').style.display = 'block';
+        }
+
         if (data.instances && data.instances.length > 0) {
             displayInstances(data.instances);
         } else {
@@ -3490,6 +4455,34 @@ function displayInstances(instances) {
         stateCell.textContent = instance.state.toUpperCase();
         stateCell.style.color = stateColor;
         row.appendChild(stateCell);
+
+        // Port 80 whitelist status
+        const port80Cell = document.createElement('td');
+        port80Cell.style.textAlign = 'center';
+        if (instance.port_80_whitelisted) {
+            port80Cell.textContent = '✓';
+            port80Cell.style.color = '#00ff00';
+            port80Cell.style.fontSize = '1.2rem';
+        } else {
+            port80Cell.textContent = '✗';
+            port80Cell.style.color = '#ff0000';
+            port80Cell.style.fontSize = '1.2rem';
+        }
+        row.appendChild(port80Cell);
+
+        // Port 443 whitelist status
+        const port443Cell = document.createElement('td');
+        port443Cell.style.textAlign = 'center';
+        if (instance.port_443_whitelisted) {
+            port443Cell.textContent = '✓';
+            port443Cell.style.color = '#00ff00';
+            port443Cell.style.fontSize = '1.2rem';
+        } else {
+            port443Cell.textContent = '✗';
+            port443Cell.style.color = '#ff0000';
+            port443Cell.style.fontSize = '1.2rem';
+        }
+        row.appendChild(port443Cell);
 
         tbody.appendChild(row);
     });
