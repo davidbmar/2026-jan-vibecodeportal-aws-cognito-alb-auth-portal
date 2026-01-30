@@ -13,6 +13,8 @@ fi
 INSTANCE_ID=$1
 USER_POOL_ID=$(terraform output -raw cognito_user_pool_id 2>/dev/null || echo "us-east-1_XXXXXXX")
 AWS_REGION=$(terraform output -raw aws_region 2>/dev/null || echo "us-east-1")
+CLIENT_ID=$(terraform output -raw cognito_app_client_id 2>/dev/null || echo "")
+CLIENT_SECRET=$(terraform output -raw cognito_app_client_secret 2>/dev/null || echo "")
 
 echo "================================================"
 echo "Employee Portal Deployment Script"
@@ -50,10 +52,12 @@ sed -n '/^cat > \/opt\/employee-portal\/app.py << .EOFAPP./,/^EOFAPP$/p' user_da
 # Substitute variables
 sed -i "s/\${user_pool_id}/$USER_POOL_ID/g" "$DEPLOY_DIR/app.py"
 sed -i "s/\${aws_region}/$AWS_REGION/g" "$DEPLOY_DIR/app.py"
+sed -i "s/\${client_id}/$CLIENT_ID/g" "$DEPLOY_DIR/app.py"
+sed -i "s/\${client_secret}/$CLIENT_SECRET/g" "$DEPLOY_DIR/app.py"
 
 # Extract templates
 echo "Extracting templates..."
-for template in base.html home.html directory.html area.html denied.html logged_out.html mfa_setup.html password_reset_info.html admin_panel.html ec2_resources.html settings.html system_config.html error.html; do
+for template in base.html home.html directory.html area.html denied.html logged_out.html login.html error.html admin_panel.html ec2_resources.html; do
     template_upper=$(echo $template | sed 's/\.html//' | tr 'a-z' 'A-Z' | tr '-' '_')
     marker="EOF${template_upper}"
     if grep -q "EOF${template_upper}" user_data.sh 2>/dev/null; then

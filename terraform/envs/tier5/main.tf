@@ -515,7 +515,9 @@ resource "aws_iam_role_policy" "ec2_cognito" {
           "cognito-idp:AdminCreateUser",
           "cognito-idp:AdminDeleteUser",
           "cognito-idp:AdminSetUserPassword",
-          "cognito-idp:AdminListUserAuthEvents"
+          "cognito-idp:AdminListUserAuthEvents",
+          "cognito-idp:GetGroup",
+          "cognito-idp:CreateGroup"
         ]
         Resource = aws_cognito_user_pool.main.arn
       },
@@ -531,6 +533,7 @@ resource "aws_iam_role_policy" "ec2_cognito" {
           "ec2:RunInstances",
           "ec2:CreateSecurityGroup",
           "ec2:AuthorizeSecurityGroupIngress",
+          "ec2:RevokeSecurityGroupIngress",
           "ec2:DescribeSubnets",
           "ec2:DescribeVpcs"
         ]

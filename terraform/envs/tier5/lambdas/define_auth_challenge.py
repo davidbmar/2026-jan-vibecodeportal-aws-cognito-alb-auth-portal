@@ -36,18 +36,28 @@ def lambda_handler(event, context):
         print("Session 0: Issuing CUSTOM_CHALLENGE (email MFA)")
 
     elif len(session) == 1:
-        # Second attempt - MFA challenge completed
+        # Second attempt - check if first MFA was correct
         if session[0]['challengeName'] == 'CUSTOM_CHALLENGE' and session[0]['challengeResult']:
             # MFA code was correct, issue tokens
             event['response']['issueTokens'] = True
             print("Session 1: MFA correct, issuing tokens")
         else:
-            # MFA code was wrong, fail authentication
+            # MFA code was wrong, allow retry (issue new challenge)
+            event['response']['challengeName'] = 'CUSTOM_CHALLENGE'
+            print("Session 1: MFA incorrect, issuing new challenge")
+
+    elif len(session) == 2:
+        # Third attempt - check second MFA attempt
+        if session[1]['challengeName'] == 'CUSTOM_CHALLENGE' and session[1]['challengeResult']:
+            event['response']['issueTokens'] = True
+            print("Session 2: MFA correct on retry, issuing tokens")
+        else:
+            # Two wrong attempts - fail authentication
             event['response']['failAuthentication'] = True
-            print("Session 1: MFA incorrect, failing authentication")
+            print("Session 2: MFA incorrect again, failing authentication")
 
     else:
-        # Too many failed attempts
+        # Too many failed attempts (3+)
         event['response']['failAuthentication'] = True
         print(f"Session {len(session)}: Too many attempts, failing authentication")
 

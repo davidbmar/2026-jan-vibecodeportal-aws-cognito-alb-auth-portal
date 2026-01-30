@@ -1019,81 +1019,18 @@ def get_instances_for_user_groups(groups: list) -> list:
     return instances
 
 
-def get_instances_user_is_whitelisted_on(email: str, user_ip: str) -> list:
-    """
-    Find all instances where a user's IP is currently whitelisted.
-
-    Scans all instances with VibeCodeArea tags and checks their security groups
-    for rules containing the user's email in the description.
-
-    Args:
-        email: User's email address
-        user_ip: User's IP address to check
-
-    Returns:
-        list: Instance IDs where user's IP is whitelisted
-    """
-    whitelisted_instances = []
-
-    try:
-        # Get all instances with VibeCodeArea tag
-        all_instances = get_instances_by_tag()
-
-        for instance in all_instances:
-            instance_id = instance['instance_id']
-
-            try:
-                # Get instance security groups
-                security_groups = get_instance_security_groups(instance_id)
-
-                if not security_groups:
-                    continue
-
-                # Check the vibecode-launched-instances security group
-                for sg in security_groups:
-                    if sg.get('GroupName') != 'vibecode-launched-instances':
-                        continue
-
-                    sg_id = sg['GroupId']
-
-                    # Get security group rules
-                    sg_details = ec2_client.describe_security_groups(GroupIds=[sg_id])
-
-                    if not sg_details['SecurityGroups']:
-                        continue
-
-                    # Check if user's IP is in any rule
-                    for permission in sg_details['SecurityGroups'][0].get('IpPermissions', []):
-                        for ip_range in permission.get('IpRanges', []):
-                            description = ip_range.get('Description', '')
-                            cidr = ip_range.get('CidrIp', '')
-
-                            # Check if this rule belongs to the user
-                            if email in description and f"{user_ip}/32" == cidr:
-                                whitelisted_instances.append(instance_id)
-                                break
-
-            except Exception as e:
-                print(f"Error checking whitelist for instance {instance_id}: {e}")
-                continue
-
-    except Exception as e:
-        print(f"Error in get_instances_user_is_whitelisted_on: {e}")
-
-    return list(set(whitelisted_instances))  # Remove duplicates
-
-
 def whitelist_user_ip_on_instances(email: str, groups: list, client_ip: str) -> dict:
     """
-    Whitelist user's IP on instances matching their groups AND revoke from lost access.
+    Whitelist user's IP on all instances matching their Cognito groups.
 
     Process:
     1. Get old IP for this user (if exists)
-    2. Get instances user SHOULD have access to (based on current groups)
-    3. Get instances user IS currently whitelisted on
-    4. Calculate lost access (whitelisted but no longer in matching group)
-    5. Remove IP from lost access instances
-    6. Add/update IP on current access instances
+    2. Filter groups to area groups (any group except system groups like 'admins')
+    3. For each area group, get matching instances via get_instances_by_tag()
+    4. For each instance:
+       - Get security group ID
+       - Remove old IP rules if IP changed
+       - Add new IP rules with descriptive description
 
     Args:
         email: User's email address
@@ -1105,7 +1042,6 @@ def whitelist_user_ip_on_instances(email: str, groups: list, client_ip: str) -> 
             - success: bool (True if at least partial success)
             - instances_updated: list of instance IDs successfully updated
             - instances_failed: list of instance IDs that failed
-            - instances_revoked: list of instance IDs where access was revoked
             - old_ip_removed: str or None (old IP if it was replaced)
             - errors: list of error messages
     """
@@ -1113,76 +1049,27 @@ def whitelist_user_ip_on_instances(email: str, groups: list, client_ip: str) -> 
         'success': False,
         'instances_updated': [],
         'instances_failed': [],
-        'instances_revoked': [],
         'old_ip_removed': None,
         'errors': []
     }
 
     try:
-        # Step 1: Get old IP for this user
+        # Get old IP for this user
         old_ip = get_user_whitelisted_ip(email)
         ip_changed = old_ip and old_ip != client_ip
 
         if ip_changed:
             result['old_ip_removed'] = old_ip
 
-        # Use current IP for checking existing access, or old IP if IP changed
-        check_ip = old_ip if old_ip else client_ip
+        # Get instances matching user's groups
+        instances = get_instances_for_user_groups(groups)
 
-        # Step 2: Get instances user SHOULD have access to (based on current groups)
-        current_access_instances = get_instances_for_user_groups(groups)
-        current_access_ids = {inst['instance_id'] for inst in current_access_instances}
-
-        # Step 3: Get instances user IS currently whitelisted on
-        whitelisted_instance_ids = set(get_instances_user_is_whitelisted_on(email, check_ip))
-
-        # Step 4: Calculate lost access (whitelisted but no longer in matching group)
-        lost_access_ids = whitelisted_instance_ids - current_access_ids
-
-        # Step 5: Revoke access from lost instances
-        if lost_access_ids:
-            print(f"[IP-REVOKE] User {email} lost access to instances: {list(lost_access_ids)}")
-
-            for instance_id in lost_access_ids:
-                try:
-                    # Get instance security groups
-                    security_groups = get_instance_security_groups(instance_id)
-
-                    if not security_groups:
-                        result['errors'].append(f"{instance_id}: No security groups for revocation")
-                        continue
-
-                    # Find the vibecode-launched-instances security group
-                    sg_id = None
-                    for sg in security_groups:
-                        if sg.get('GroupName') == 'vibecode-launched-instances':
-                            sg_id = sg['GroupId']
-                            break
-
-                    if not sg_id:
-                        result['errors'].append(f"{instance_id}: vibecode-launched-instances SG not found for revocation")
-                        continue
-
-                    # Remove IP from ports 80 and 443
-                    revoke_success = 0
-                    for port in [80, 443]:
-                        if remove_ip_from_security_group(sg_id, port, check_ip):
-                            revoke_success += 1
-
-                    if revoke_success > 0:
-                        result['instances_revoked'].append(instance_id)
-                        print(f"[IP-REVOKE] Removed {email} IP {check_ip} from instance {instance_id}")
-
-                except Exception as e:
-                    result['errors'].append(f"{instance_id} revocation error: {str(e)}")
-
-        # Step 6: Add/update IP on current access instances
-        if not current_access_instances:
-            # User has no area groups - this is handled by the full revocation in /verify-code
-            result['success'] = len(result['instances_revoked']) > 0 or len(whitelisted_instance_ids) == 0
+        if not instances:
+            result['errors'].append(f"No instances found for groups: {groups}")
             return result
 
-        for instance in current_access_instances:
+        # Process each instance
+        for instance in instances:
             instance_id = instance['instance_id']
             area = instance.get('area', 'unknown')
 
@@ -1233,8 +1120,8 @@ def whitelist_user_ip_on_instances(email: str, groups: list, client_ip: str) -> 
                 result['instances_failed'].append(instance_id)
                 result['errors'].append(f"{instance_id}: {str(e)}")
 
-        # Success if at least one instance was updated or revoked
-        result['success'] = len(result['instances_updated']) > 0 or len(result['instances_revoked']) > 0
+        # Success if at least one instance was updated
+        result['success'] = len(result['instances_updated']) > 0
         return result
 
     except Exception as e:
@@ -1318,84 +1205,6 @@ def remove_user_ip_from_instances(email: str, instance_ids: list) -> dict:
     except Exception as e:
         result['errors'].append(f"Remove operation failed: {str(e)}")
         return result
-
-
-def revoke_user_ip_from_all_instances(email: str) -> dict:
-    """
-    Remove user's IP from all instances (complete access revocation).
-
-    Used when user loses all area group membership - ensures immediate
-    access revocation by removing their IP from the shared security group
-    used by all launched instances.
-
-    Unlike remove_user_ip_from_instances() which targets specific instance IDs,
-    this function removes the user's IP from the security group itself, which
-    affects all instances using that security group.
-
-    Args:
-        email: User's email address
-
-    Returns:
-        dict with keys:
-            - success: bool (True if IP was found and removed, or no IP found)
-            - ports_revoked: list of ports where IP was removed (e.g., [80, 443])
-            - user_ip: str or None (IP that was removed)
-            - errors: list of error messages (empty if success)
-    """
-    result = {
-        'success': False,
-        'ports_revoked': [],
-        'user_ip': None,
-        'errors': []
-    }
-
-    try:
-        # Step 1: Get user's currently whitelisted IP
-        user_ip = get_user_whitelisted_ip(email)
-
-        if not user_ip:
-            # User has no IP whitelisted - nothing to revoke (success case)
-            result['success'] = True
-            return result
-
-        result['user_ip'] = user_ip
-
-        # Step 2: Find the vibecode-launched-instances security group
-        try:
-            response = ec2_client.describe_security_groups(
-                Filters=[
-                    {'Name': 'group-name', 'Values': ['vibecode-launched-instances']}
-                ]
-            )
-
-            if not response['SecurityGroups']:
-                result['errors'].append('vibecode-launched-instances security group not found')
-                return result
-
-            sg_id = response['SecurityGroups'][0]['GroupId']
-
-        except Exception as e:
-            result['errors'].append(f"Failed to query security group: {str(e)}")
-            return result
-
-        # Step 3: Remove IP from ports 80 and 443
-        for port in [80, 443]:
-            try:
-                if remove_ip_from_security_group(sg_id, port, user_ip):
-                    result['ports_revoked'].append(port)
-                else:
-                    result['errors'].append(f"Failed to remove IP from port {port}")
-            except Exception as e:
-                result['errors'].append(f"Error removing IP from port {port}: {str(e)}")
-
-        # Success if at least one port was revoked
-        result['success'] = len(result['ports_revoked']) > 0
-        return result
-
-    except Exception as e:
-        result['errors'].append(f"Unexpected error during revocation: {str(e)}")
-        return result
-
 
 # ============================================================================
 # COGNITO USER MANAGEMENT
@@ -1652,7 +1461,7 @@ async def verify_code(
         client_ip = get_client_ip(request)
         print(f"Successful login: {email} from IP {client_ip} at {datetime.utcnow().isoformat()}")
 
-        # IP Whitelisting: Add or revoke user's IP based on group membership
+        # Whitelist user IP on their group instances
         try:
             # Decode JWT to get groups
             user_data = jwt.decode(
@@ -1661,48 +1470,23 @@ async def verify_code(
             )
             user_groups = user_data.get('cognito:groups', [])
 
-            # Filter out system groups to get area groups (groups that grant instance access)
-            area_groups = [g for g in user_groups if g not in SYSTEM_GROUPS]
+            # Whitelist IP on matching instances
+            whitelist_result = whitelist_user_ip_on_instances(email, user_groups, client_ip)
 
-            if not area_groups:
-                # User has NO area groups (only system groups like 'admins')
-                # Revoke all instance access by removing IP from security group
-                print(f"[IP-REVOKE] {datetime.utcnow().isoformat()} | USER: {email} | REASON: no_area_groups | USER_GROUPS: {user_groups}")
-
-                revoke_result = revoke_user_ip_from_all_instances(email)
-
-                if revoke_result['success']:
-                    if revoke_result['user_ip']:
-                        print(f"[IP-REVOKE] {datetime.utcnow().isoformat()} | USER: {email} | IP: {revoke_result['user_ip']} | PORTS: {revoke_result['ports_revoked']} | STATUS: success")
-                    else:
-                        print(f"[IP-REVOKE] {datetime.utcnow().isoformat()} | USER: {email} | STATUS: no_ip_found (nothing to revoke)")
-                else:
-                    print(f"[IP-REVOKE] {datetime.utcnow().isoformat()} | USER: {email} | STATUS: failed")
-                    for error in revoke_result.get('errors', []):
-                        print(f"  Error: {error}")
-
+            if whitelist_result['success']:
+                print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | USER: {email} | IP: {client_ip} | INSTANCES: {len(whitelist_result['instances_updated'])} | STATUS: success")
+                if whitelist_result.get('old_ip_removed'):
+                    print(f"  Replaced old IP: {whitelist_result['old_ip_removed']}")
             else:
-                # User HAS area groups - whitelist IP on matching instances and revoke from lost access
-                print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | USER: {email} | AREA_GROUPS: {area_groups}")
-
-                whitelist_result = whitelist_user_ip_on_instances(email, user_groups, client_ip)
-
-                if whitelist_result['success']:
-                    print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | USER: {email} | IP: {client_ip} | INSTANCES_ADDED: {len(whitelist_result['instances_updated'])} | INSTANCES_REVOKED: {len(whitelist_result.get('instances_revoked', []))} | STATUS: success")
-                    if whitelist_result.get('old_ip_removed'):
-                        print(f"  Replaced old IP: {whitelist_result['old_ip_removed']}")
-                    if whitelist_result.get('instances_revoked'):
-                        print(f"  Revoked access from: {whitelist_result['instances_revoked']}")
-                else:
-                    print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | USER: {email} | IP: {client_ip} | STATUS: partial_failure")
-                    print(f"  Updated: {len(whitelist_result['instances_updated'])}, Revoked: {len(whitelist_result.get('instances_revoked', []))}, Failed: {len(whitelist_result['instances_failed'])}")
-                    for error in whitelist_result.get('errors', []):
-                        print(f"  Error: {error}")
+                print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | USER: {email} | IP: {client_ip} | STATUS: partial_failure")
+                print(f"  Updated: {len(whitelist_result['instances_updated'])}, Failed: {len(whitelist_result['instances_failed'])}")
+                for error in whitelist_result.get('errors', []):
+                    print(f"  Error: {error}")
 
         except Exception as e:
-            # Don't fail login on whitelist/revoke errors - log and continue
+            # Don't fail login on whitelist errors - log and continue
             print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | USER: {email} | IP: {client_ip} | STATUS: error | ERROR: {e}")
-            print("WARNING: User can login but IP whitelist/revocation may not be applied correctly. Admin review needed.")
+            print("WARNING: User can login but may not have instance access. Admin review needed.")
 
         # Create response and set secure cookie
         response = RedirectResponse(url="/", status_code=303)
@@ -2535,8 +2319,7 @@ async def get_ec2_instances_api(request: Request):
     # Get client IP
     client_ip = get_client_ip(request)
 
-    # Get ALL instances with VibeCodeArea tag (not filtered by user groups)
-    # The whitelist indicators will show which ones the user actually has access to
+    # Get instances
     instances = get_instances_by_tag()
 
     # Enhance each instance with whitelist status
@@ -3949,17 +3732,17 @@ cat > /opt/employee-portal/templates/admin_panel.html << 'EOFADMIN'
                     <td>
                         <button onclick="showAddGroupModal('{{ user.username }}', '{{ user.email }}')"
                                 style="background: rgba(0, 255, 0, 0.1); border: 1px solid #00ff00; color: #00ff00; padding: 0.4rem 0.8rem; cursor: pointer; margin-right: 0.5rem; font-family: 'Source Code Pro', monospace; font-size: 0.75rem;">
-                            + ADD GROUP
+                            + ADD
                         </button>
                         {% if user.groups %}
-                        <button onclick='showRemoveGroupModal("{{ user.username }}", "{{ user.email }}", {{ user.groups|tojson }})'
+                        <button onclick="showRemoveGroupModal('{{ user.username }}', '{{ user.email }}', {{ user.groups|tojson }})"
                                 style="background: rgba(255, 0, 0, 0.1); border: 1px solid #ff0000; color: #ff0000; padding: 0.4rem 0.8rem; cursor: pointer; margin-right: 0.5rem; font-family: 'Source Code Pro', monospace; font-size: 0.75rem;">
-                            - REMOVE GROUP
+                            - REMOVE
                         </button>
                         {% endif %}
                         <button onclick="showDeleteUserModal('{{ user.username }}', '{{ user.email }}')"
                                 style="background: rgba(255, 0, 0, 0.2); border: 1px solid #ff0000; color: #ff0000; padding: 0.4rem 0.8rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-size: 0.75rem;">
-                            🗑 DELETE USER
+                            🗑 DELETE
                         </button>
                     </td>
                 </tr>

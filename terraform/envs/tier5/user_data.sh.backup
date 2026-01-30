@@ -1019,81 +1019,18 @@ def get_instances_for_user_groups(groups: list) -> list:
     return instances
 
 
-def get_instances_user_is_whitelisted_on(email: str, user_ip: str) -> list:
-    """
-    Find all instances where a user's IP is currently whitelisted.
-
-    Scans all instances with VibeCodeArea tags and checks their security groups
-    for rules containing the user's email in the description.
-
-    Args:
-        email: User's email address
-        user_ip: User's IP address to check
-
-    Returns:
-        list: Instance IDs where user's IP is whitelisted
-    """
-    whitelisted_instances = []
-
-    try:
-        # Get all instances with VibeCodeArea tag
-        all_instances = get_instances_by_tag()
-
-        for instance in all_instances:
-            instance_id = instance['instance_id']
-
-            try:
-                # Get instance security groups
-                security_groups = get_instance_security_groups(instance_id)
-
-                if not security_groups:
-                    continue
-
-                # Check the vibecode-launched-instances security group
-                for sg in security_groups:
-                    if sg.get('GroupName') != 'vibecode-launched-instances':
-                        continue
-
-                    sg_id = sg['GroupId']
-
-                    # Get security group rules
-                    sg_details = ec2_client.describe_security_groups(GroupIds=[sg_id])
-
-                    if not sg_details['SecurityGroups']:
-                        continue
-
-                    # Check if user's IP is in any rule
-                    for permission in sg_details['SecurityGroups'][0].get('IpPermissions', []):
-                        for ip_range in permission.get('IpRanges', []):
-                            description = ip_range.get('Description', '')
-                            cidr = ip_range.get('CidrIp', '')
-
-                            # Check if this rule belongs to the user
-                            if email in description and f"{user_ip}/32" == cidr:
-                                whitelisted_instances.append(instance_id)
-                                break
-
-            except Exception as e:
-                print(f"Error checking whitelist for instance {instance_id}: {e}")
-                continue
-
-    except Exception as e:
-        print(f"Error in get_instances_user_is_whitelisted_on: {e}")
-
-    return list(set(whitelisted_instances))  # Remove duplicates
-
-
 def whitelist_user_ip_on_instances(email: str, groups: list, client_ip: str) -> dict:
     """
-    Whitelist user's IP on instances matching their groups AND revoke from lost access.
+    Whitelist user's IP on all instances matching their Cognito groups.
 
     Process:
     1. Get old IP for this user (if exists)
-    2. Get instances user SHOULD have access to (based on current groups)
-    3. Get instances user IS currently whitelisted on
-    4. Calculate lost access (whitelisted but no longer in matching group)
-    5. Remove IP from lost access instances
-    6. Add/update IP on current access instances
+    2. Filter groups to area groups (any group except system groups like 'admins')
+    3. For each area group, get matching instances via get_instances_by_tag()
+    4. For each instance:
+       - Get security group ID
+       - Remove old IP rules if IP changed
+       - Add new IP rules with descriptive description
 
     Args:
         email: User's email address
@@ -1105,7 +1042,6 @@ def whitelist_user_ip_on_instances(email: str, groups: list, client_ip: str) -> 
             - success: bool (True if at least partial success)
             - instances_updated: list of instance IDs successfully updated
             - instances_failed: list of instance IDs that failed
-            - instances_revoked: list of instance IDs where access was revoked
             - old_ip_removed: str or None (old IP if it was replaced)
             - errors: list of error messages
     """
@@ -1113,76 +1049,27 @@ def whitelist_user_ip_on_instances(email: str, groups: list, client_ip: str) -> 
         'success': False,
         'instances_updated': [],
         'instances_failed': [],
-        'instances_revoked': [],
         'old_ip_removed': None,
         'errors': []
     }
 
     try:
-        # Step 1: Get old IP for this user
+        # Get old IP for this user
         old_ip = get_user_whitelisted_ip(email)
         ip_changed = old_ip and old_ip != client_ip
 
         if ip_changed:
             result['old_ip_removed'] = old_ip
 
-        # Use current IP for checking existing access, or old IP if IP changed
-        check_ip = old_ip if old_ip else client_ip
+        # Get instances matching user's groups
+        instances = get_instances_for_user_groups(groups)
 
-        # Step 2: Get instances user SHOULD have access to (based on current groups)
-        current_access_instances = get_instances_for_user_groups(groups)
-        current_access_ids = {inst['instance_id'] for inst in current_access_instances}
-
-        # Step 3: Get instances user IS currently whitelisted on
-        whitelisted_instance_ids = set(get_instances_user_is_whitelisted_on(email, check_ip))
-
-        # Step 4: Calculate lost access (whitelisted but no longer in matching group)
-        lost_access_ids = whitelisted_instance_ids - current_access_ids
-
-        # Step 5: Revoke access from lost instances
-        if lost_access_ids:
-            print(f"[IP-REVOKE] User {email} lost access to instances: {list(lost_access_ids)}")
-
-            for instance_id in lost_access_ids:
-                try:
-                    # Get instance security groups
-                    security_groups = get_instance_security_groups(instance_id)
-
-                    if not security_groups:
-                        result['errors'].append(f"{instance_id}: No security groups for revocation")
-                        continue
-
-                    # Find the vibecode-launched-instances security group
-                    sg_id = None
-                    for sg in security_groups:
-                        if sg.get('GroupName') == 'vibecode-launched-instances':
-                            sg_id = sg['GroupId']
-                            break
-
-                    if not sg_id:
-                        result['errors'].append(f"{instance_id}: vibecode-launched-instances SG not found for revocation")
-                        continue
-
-                    # Remove IP from ports 80 and 443
-                    revoke_success = 0
-                    for port in [80, 443]:
-                        if remove_ip_from_security_group(sg_id, port, check_ip):
-                            revoke_success += 1
-
-                    if revoke_success > 0:
-                        result['instances_revoked'].append(instance_id)
-                        print(f"[IP-REVOKE] Removed {email} IP {check_ip} from instance {instance_id}")
-
-                except Exception as e:
-                    result['errors'].append(f"{instance_id} revocation error: {str(e)}")
-
-        # Step 6: Add/update IP on current access instances
-        if not current_access_instances:
-            # User has no area groups - this is handled by the full revocation in /verify-code
-            result['success'] = len(result['instances_revoked']) > 0 or len(whitelisted_instance_ids) == 0
+        if not instances:
+            result['errors'].append(f"No instances found for groups: {groups}")
             return result
 
-        for instance in current_access_instances:
+        # Process each instance
+        for instance in instances:
             instance_id = instance['instance_id']
             area = instance.get('area', 'unknown')
 
@@ -1217,7 +1104,7 @@ def whitelist_user_ip_on_instances(email: str, groups: list, client_ip: str) -> 
                 success_count = 0
 
                 for port in [80, 443]:
-                    description = f"User={email}, IP={client_ip}, Port={port}, Added={timestamp}"
+                    description = f"User: {email} | IP: {client_ip} | Port: {port} | Added: {timestamp}"
                     if add_ip_to_security_group(sg_id, port, client_ip, description):
                         success_count += 1
                     else:
@@ -1233,8 +1120,8 @@ def whitelist_user_ip_on_instances(email: str, groups: list, client_ip: str) -> 
                 result['instances_failed'].append(instance_id)
                 result['errors'].append(f"{instance_id}: {str(e)}")
 
-        # Success if at least one instance was updated or revoked
-        result['success'] = len(result['instances_updated']) > 0 or len(result['instances_revoked']) > 0
+        # Success if at least one instance was updated
+        result['success'] = len(result['instances_updated']) > 0
         return result
 
     except Exception as e:
@@ -1318,84 +1205,6 @@ def remove_user_ip_from_instances(email: str, instance_ids: list) -> dict:
     except Exception as e:
         result['errors'].append(f"Remove operation failed: {str(e)}")
         return result
-
-
-def revoke_user_ip_from_all_instances(email: str) -> dict:
-    """
-    Remove user's IP from all instances (complete access revocation).
-
-    Used when user loses all area group membership - ensures immediate
-    access revocation by removing their IP from the shared security group
-    used by all launched instances.
-
-    Unlike remove_user_ip_from_instances() which targets specific instance IDs,
-    this function removes the user's IP from the security group itself, which
-    affects all instances using that security group.
-
-    Args:
-        email: User's email address
-
-    Returns:
-        dict with keys:
-            - success: bool (True if IP was found and removed, or no IP found)
-            - ports_revoked: list of ports where IP was removed (e.g., [80, 443])
-            - user_ip: str or None (IP that was removed)
-            - errors: list of error messages (empty if success)
-    """
-    result = {
-        'success': False,
-        'ports_revoked': [],
-        'user_ip': None,
-        'errors': []
-    }
-
-    try:
-        # Step 1: Get user's currently whitelisted IP
-        user_ip = get_user_whitelisted_ip(email)
-
-        if not user_ip:
-            # User has no IP whitelisted - nothing to revoke (success case)
-            result['success'] = True
-            return result
-
-        result['user_ip'] = user_ip
-
-        # Step 2: Find the vibecode-launched-instances security group
-        try:
-            response = ec2_client.describe_security_groups(
-                Filters=[
-                    {'Name': 'group-name', 'Values': ['vibecode-launched-instances']}
-                ]
-            )
-
-            if not response['SecurityGroups']:
-                result['errors'].append('vibecode-launched-instances security group not found')
-                return result
-
-            sg_id = response['SecurityGroups'][0]['GroupId']
-
-        except Exception as e:
-            result['errors'].append(f"Failed to query security group: {str(e)}")
-            return result
-
-        # Step 3: Remove IP from ports 80 and 443
-        for port in [80, 443]:
-            try:
-                if remove_ip_from_security_group(sg_id, port, user_ip):
-                    result['ports_revoked'].append(port)
-                else:
-                    result['errors'].append(f"Failed to remove IP from port {port}")
-            except Exception as e:
-                result['errors'].append(f"Error removing IP from port {port}: {str(e)}")
-
-        # Success if at least one port was revoked
-        result['success'] = len(result['ports_revoked']) > 0
-        return result
-
-    except Exception as e:
-        result['errors'].append(f"Unexpected error during revocation: {str(e)}")
-        return result
-
 
 # ============================================================================
 # COGNITO USER MANAGEMENT
@@ -1652,7 +1461,7 @@ async def verify_code(
         client_ip = get_client_ip(request)
         print(f"Successful login: {email} from IP {client_ip} at {datetime.utcnow().isoformat()}")
 
-        # IP Whitelisting: Add or revoke user's IP based on group membership
+        # Whitelist user IP on their group instances
         try:
             # Decode JWT to get groups
             user_data = jwt.decode(
@@ -1661,48 +1470,23 @@ async def verify_code(
             )
             user_groups = user_data.get('cognito:groups', [])
 
-            # Filter out system groups to get area groups (groups that grant instance access)
-            area_groups = [g for g in user_groups if g not in SYSTEM_GROUPS]
+            # Whitelist IP on matching instances
+            whitelist_result = whitelist_user_ip_on_instances(email, user_groups, client_ip)
 
-            if not area_groups:
-                # User has NO area groups (only system groups like 'admins')
-                # Revoke all instance access by removing IP from security group
-                print(f"[IP-REVOKE] {datetime.utcnow().isoformat()} | USER: {email} | REASON: no_area_groups | USER_GROUPS: {user_groups}")
-
-                revoke_result = revoke_user_ip_from_all_instances(email)
-
-                if revoke_result['success']:
-                    if revoke_result['user_ip']:
-                        print(f"[IP-REVOKE] {datetime.utcnow().isoformat()} | USER: {email} | IP: {revoke_result['user_ip']} | PORTS: {revoke_result['ports_revoked']} | STATUS: success")
-                    else:
-                        print(f"[IP-REVOKE] {datetime.utcnow().isoformat()} | USER: {email} | STATUS: no_ip_found (nothing to revoke)")
-                else:
-                    print(f"[IP-REVOKE] {datetime.utcnow().isoformat()} | USER: {email} | STATUS: failed")
-                    for error in revoke_result.get('errors', []):
-                        print(f"  Error: {error}")
-
+            if whitelist_result['success']:
+                print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | USER: {email} | IP: {client_ip} | INSTANCES: {len(whitelist_result['instances_updated'])} | STATUS: success")
+                if whitelist_result.get('old_ip_removed'):
+                    print(f"  Replaced old IP: {whitelist_result['old_ip_removed']}")
             else:
-                # User HAS area groups - whitelist IP on matching instances and revoke from lost access
-                print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | USER: {email} | AREA_GROUPS: {area_groups}")
-
-                whitelist_result = whitelist_user_ip_on_instances(email, user_groups, client_ip)
-
-                if whitelist_result['success']:
-                    print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | USER: {email} | IP: {client_ip} | INSTANCES_ADDED: {len(whitelist_result['instances_updated'])} | INSTANCES_REVOKED: {len(whitelist_result.get('instances_revoked', []))} | STATUS: success")
-                    if whitelist_result.get('old_ip_removed'):
-                        print(f"  Replaced old IP: {whitelist_result['old_ip_removed']}")
-                    if whitelist_result.get('instances_revoked'):
-                        print(f"  Revoked access from: {whitelist_result['instances_revoked']}")
-                else:
-                    print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | USER: {email} | IP: {client_ip} | STATUS: partial_failure")
-                    print(f"  Updated: {len(whitelist_result['instances_updated'])}, Revoked: {len(whitelist_result.get('instances_revoked', []))}, Failed: {len(whitelist_result['instances_failed'])}")
-                    for error in whitelist_result.get('errors', []):
-                        print(f"  Error: {error}")
+                print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | USER: {email} | IP: {client_ip} | STATUS: partial_failure")
+                print(f"  Updated: {len(whitelist_result['instances_updated'])}, Failed: {len(whitelist_result['instances_failed'])}")
+                for error in whitelist_result.get('errors', []):
+                    print(f"  Error: {error}")
 
         except Exception as e:
-            # Don't fail login on whitelist/revoke errors - log and continue
+            # Don't fail login on whitelist errors - log and continue
             print(f"[IP-WHITELIST] {datetime.utcnow().isoformat()} | USER: {email} | IP: {client_ip} | STATUS: error | ERROR: {e}")
-            print("WARNING: User can login but IP whitelist/revocation may not be applied correctly. Admin review needed.")
+            print("WARNING: User can login but may not have instance access. Admin review needed.")
 
         # Create response and set secure cookie
         response = RedirectResponse(url="/", status_code=303)
@@ -2535,8 +2319,7 @@ async def get_ec2_instances_api(request: Request):
     # Get client IP
     client_ip = get_client_ip(request)
 
-    # Get ALL instances with VibeCodeArea tag (not filtered by user groups)
-    # The whitelist indicators will show which ones the user actually has access to
+    # Get instances
     instances = get_instances_by_tag()
 
     # Enhance each instance with whitelist status
@@ -3249,9 +3032,10 @@ cat > /opt/employee-portal/templates/home.html << 'EOFHOME'
         <p>You do not have access to any areas yet. Please contact your administrator.</p>
     {% endif %}
 
-    <p style="font-size: 0.9rem; opacity: 0.7; margin-top: 2rem; text-align: center;">
-        🔐 This system uses passwordless email verification
-    </p>
+    <h3 style="margin-top: 2rem;">Account Security</h3>
+    <div style="margin-top: 1rem;">
+        <a href="/settings" class="area-link" style="background: #006400; border-color: #00ff00;">⚙️ Account Settings</a>
+    </div>
 </div>
 {% endblock %}
 EOFHOME
@@ -3949,17 +3733,17 @@ cat > /opt/employee-portal/templates/admin_panel.html << 'EOFADMIN'
                     <td>
                         <button onclick="showAddGroupModal('{{ user.username }}', '{{ user.email }}')"
                                 style="background: rgba(0, 255, 0, 0.1); border: 1px solid #00ff00; color: #00ff00; padding: 0.4rem 0.8rem; cursor: pointer; margin-right: 0.5rem; font-family: 'Source Code Pro', monospace; font-size: 0.75rem;">
-                            + ADD GROUP
+                            + ADD
                         </button>
                         {% if user.groups %}
-                        <button onclick='showRemoveGroupModal("{{ user.username }}", "{{ user.email }}", {{ user.groups|tojson }})'
+                        <button onclick="showRemoveGroupModal('{{ user.username }}', '{{ user.email }}', {{ user.groups|tojson }})"
                                 style="background: rgba(255, 0, 0, 0.1); border: 1px solid #ff0000; color: #ff0000; padding: 0.4rem 0.8rem; cursor: pointer; margin-right: 0.5rem; font-family: 'Source Code Pro', monospace; font-size: 0.75rem;">
-                            - REMOVE GROUP
+                            - REMOVE
                         </button>
                         {% endif %}
                         <button onclick="showDeleteUserModal('{{ user.username }}', '{{ user.email }}')"
                                 style="background: rgba(255, 0, 0, 0.2); border: 1px solid #ff0000; color: #ff0000; padding: 0.4rem 0.8rem; cursor: pointer; font-family: 'Source Code Pro', monospace; font-size: 0.75rem;">
-                            🗑 DELETE USER
+                            🗑 DELETE
                         </button>
                     </td>
                 </tr>
@@ -4889,8 +4673,667 @@ refreshInstances();
 EOFEC2
 
 # Create password reset custom flow template
+cat > /opt/employee-portal/templates/password_reset.html << 'EOFRESETFLOW'
+{% extends "base.html" %}
+
+{% block title %}RESET PASSWORD - CAPSULE PORTAL{% endblock %}
+
+{% block content %}
+<div class="crt-container">
+    <pre class="ascii-art">
+ ██████╗ ███████╗███████╗███████╗████████╗
+ ██╔══██╗██╔════╝██╔════╝██╔════╝╚══██╔══╝
+ ██████╔╝█████╗  ███████╗█████╗     ██║
+ ██╔══██╗██╔══╝  ╚════██║██╔══╝     ██║
+ ██║  ██║███████╗███████║███████╗   ██║
+ ╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝   ╚═╝
+
+ ██████╗  █████╗ ███████╗███████╗██╗    ██╗ ██████╗ ██████╗ ██████╗
+ ██╔══██╗██╔══██╗██╔════╝██╔════╝██║    ██║██╔═══██╗██╔══██╗██╔══██╗
+ ██████╔╝███████║███████╗███████╗██║ █╗ ██║██║   ██║██████╔╝██║  ██║
+ ██╔═══╝ ██╔══██║╚════██║╚════██║██║███╗██║██║   ██║██╔══██╗██║  ██║
+ ██║     ██║  ██║███████║███████║╚███╔███╔╝╚██████╔╝██║  ██║██████╔╝
+ ╚═╝     ╚═╝  ╚═╝╚══════╝╚══════╝ ╚══╝╚══╝  ╚═════╝ ╚═╝  ╚═╝╚═════╝
+    </pre>
+
+    <div class="content-box">
+        <h2>🔑 RESET YOUR PASSWORD</h2>
+
+        <p style="opacity: 0.8; margin-bottom: 2rem;">Follow the steps below to reset your password securely.</p>
+
+        <!-- STEP 1: EMAIL -->
+        <div id="step-email" class="reset-step">
+            <div class="step-header">
+                <span class="step-number">STEP 1</span>
+                <h3 style="display: inline; margin-left: 1rem;">ENTER YOUR EMAIL</h3>
+                <span id="email-check" class="step-status" style="display: none;">✓</span>
+            </div>
+
+            <div class="step-content" id="email-content">
+                <p style="margin-bottom: 1rem;">Enter the email address associated with your account.</p>
+
+                <div id="email-error" class="error-message" style="display: none;"></div>
+
+                <div class="form-group">
+                    <label for="email-input">Email Address:</label>
+                    <input type="email" id="email-input" class="form-control" placeholder="user@example.com" autocomplete="email" />
+                </div>
+
+                <button id="send-code-btn" class="btn-primary">
+                    <span id="send-code-text">SEND RESET CODE</span>
+                    <span id="send-code-loading" style="display: none;">⟳ SENDING...</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- STEP 2: CODE -->
+        <div id="step-code" class="reset-step" style="display: none;">
+            <div class="step-header">
+                <span class="step-number">STEP 2</span>
+                <h3 style="display: inline; margin-left: 1rem;">ENTER VERIFICATION CODE</h3>
+                <span id="code-check" class="step-status" style="display: none;">✓</span>
+            </div>
+
+            <div class="step-content" id="code-content">
+                <div id="code-success" class="success-message" style="display: none;">
+                    <strong>✓ Code sent!</strong> Check your email at <span id="code-destination"></span><br>
+                    <span style="opacity: 0.8; font-size: 0.9rem;">Code is valid for 1 hour.</span>
+                </div>
+
+                <div id="code-error" class="error-message" style="display: none;"></div>
+
+                <div class="form-group">
+                    <label for="code-input">Verification Code (6 digits):</label>
+                    <input type="text" id="code-input" class="form-control" placeholder="123456" maxlength="6" pattern="[0-9]{6}" autocomplete="off" />
+                </div>
+
+                <p style="font-size: 0.85rem; opacity: 0.7; margin-bottom: 1rem;">
+                    Didn't receive the code?
+                    <a href="#" id="resend-code-link" style="color: #00ff00; text-decoration: underline;">Resend</a>
+                    <span id="resend-cooldown" style="display: none; color: #ffff00;"></span>
+                </p>
+
+                <button id="verify-code-btn" class="btn-primary">
+                    <span id="verify-code-text">VERIFY CODE</span>
+                    <span id="verify-code-loading" style="display: none;">⟳ VERIFYING...</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- STEP 3: PASSWORD -->
+        <div id="step-password" class="reset-step" style="display: none;">
+            <div class="step-header">
+                <span class="step-number">STEP 3</span>
+                <h3 style="display: inline; margin-left: 1rem;">SET NEW PASSWORD</h3>
+            </div>
+
+            <div class="step-content" id="password-content">
+                <div id="password-error" class="error-message" style="display: none;"></div>
+
+                <div class="form-group">
+                    <label for="password-input">New Password:</label>
+                    <div style="position: relative;">
+                        <input type="password" id="password-input" class="form-control" placeholder="Enter new password" autocomplete="new-password" />
+                        <button type="button" id="toggle-password" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: #00ff00; cursor: pointer; font-size: 1.2rem;">
+                            👁
+                        </button>
+                    </div>
+                </div>
+
+                <div class="password-requirements" style="margin: 1rem 0; padding: 1rem; background: rgba(0, 20, 0, 0.5); border-left: 3px solid #00ff00;">
+                    <p style="margin-bottom: 0.5rem; font-weight: bold;">Password Requirements:</p>
+                    <ul style="list-style: none; padding: 0; margin: 0; font-size: 0.9rem;">
+                        <li id="req-length" class="requirement">
+                            <span class="req-icon">✗</span> Minimum 8 characters
+                        </li>
+                        <li id="req-uppercase" class="requirement">
+                            <span class="req-icon">✗</span> At least one uppercase letter (A-Z)
+                        </li>
+                        <li id="req-lowercase" class="requirement">
+                            <span class="req-icon">✗</span> At least one lowercase letter (a-z)
+                        </li>
+                        <li id="req-number" class="requirement">
+                            <span class="req-icon">✗</span> At least one number (0-9)
+                        </li>
+                        <li id="req-special" class="requirement">
+                            <span class="req-icon">✗</span> At least one special character (!@#$%^&*)
+                        </li>
+                    </ul>
+                </div>
+
+                <button id="reset-password-btn" class="btn-primary" disabled>
+                    <span id="reset-password-text">RESET PASSWORD</span>
+                    <span id="reset-password-loading" style="display: none;">⟳ RESETTING...</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="nav-links" style="margin-top: 2rem;">
+            <a href="/logout">← RETURN TO LOGIN</a>
+        </div>
+    </div>
+</div>
+
+<style>
+.reset-step {
+    margin-bottom: 2rem;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}
+
+.reset-step.completed {
+    opacity: 0.6;
+}
+
+.reset-step.active {
+    border: 2px solid #00ff00;
+    padding: 1.5rem;
+    background: rgba(0, 255, 0, 0.05);
+    animation: glow 2s infinite;
+}
+
+@keyframes glow {
+    0%, 100% { box-shadow: 0 0 10px rgba(0, 255, 0, 0.3); }
+    50% { box-shadow: 0 0 20px rgba(0, 255, 0, 0.5); }
+}
+
+.step-header {
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+}
+
+.step-number {
+    background: rgba(0, 255, 0, 0.2);
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    padding: 0.3rem 0.8rem;
+    font-weight: bold;
+    font-size: 0.85rem;
+}
+
+.step-status {
+    color: #00ff00;
+    font-size: 1.5rem;
+    margin-left: auto;
+}
+
+.step-content {
+    padding-left: 1rem;
+}
+
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: #00ff00;
+    font-weight: bold;
+}
+
+.form-control {
+    width: 100%;
+    padding: 0.8rem;
+    background: rgba(0, 0, 0, 0.7);
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    font-family: 'Courier Prime', monospace;
+    font-size: 1rem;
+}
+
+.form-control:focus {
+    outline: none;
+    box-shadow: 0 0 10px rgba(0, 255, 0, 0.5);
+}
+
+.error-message {
+    background: rgba(255, 0, 0, 0.2);
+    border: 2px solid #ff0000;
+    color: #ff0000;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.success-message {
+    background: rgba(0, 255, 0, 0.2);
+    border: 2px solid #00ff00;
+    color: #00ff00;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.requirement {
+    margin: 0.3rem 0;
+    transition: color 0.3s ease;
+}
+
+.requirement.met {
+    color: #00ff00;
+}
+
+.requirement.met .req-icon {
+    color: #00ff00;
+}
+
+.req-icon {
+    display: inline-block;
+    width: 1.5rem;
+    color: #ff0000;
+    font-weight: bold;
+}
+</style>
+
+<script>
+// State
+let userEmail = '';
+let verificationCode = '';
+let resendCooldown = 0;
+let resendInterval = null;
+
+// Password requirements
+const requirements = {
+    length: { regex: /.{8,}/, id: 'req-length' },
+    uppercase: { regex: /[A-Z]/, id: 'req-uppercase' },
+    lowercase: { regex: /[a-z]/, id: 'req-lowercase' },
+    number: { regex: /[0-9]/, id: 'req-number' },
+    special: { regex: /[!@#$%^&*(),.?":{}|<>]/, id: 'req-special' }
+};
+
+// Elements
+const emailInput = document.getElementById('email-input');
+const sendCodeBtn = document.getElementById('send-code-btn');
+const codeInput = document.getElementById('code-input');
+const verifyCodeBtn = document.getElementById('verify-code-btn');
+const passwordInput = document.getElementById('password-input');
+const resetPasswordBtn = document.getElementById('reset-password-btn');
+const togglePasswordBtn = document.getElementById('toggle-password');
+const resendLink = document.getElementById('resend-code-link');
+
+// STEP 1: Send Code
+sendCodeBtn.addEventListener('click', async () => {
+    const email = emailInput.value.trim().toLowerCase();
+
+    if (!email) {
+        showError('email-error', 'Please enter your email address');
+        return;
+    }
+
+    // Basic email validation
+    if (!email.includes('@')) {
+        showError('email-error', 'Please enter a valid email address');
+        return;
+    }
+
+    setLoading('send-code', true);
+    hideError('email-error');
+
+    try {
+        const response = await fetch('/api/password-reset/send-code', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            userEmail = email;
+            document.getElementById('code-destination').textContent = data.destination;
+            document.getElementById('code-success').style.display = 'block';
+
+            // Complete step 1
+            completeStep('email');
+            revealStep('code');
+
+            // Start resend cooldown
+            startResendCooldown();
+        } else {
+            showError('email-error', data.message || 'Failed to send code');
+        }
+    } catch (error) {
+        showError('email-error', 'Network error. Please try again.');
+    } finally {
+        setLoading('send-code', false);
+    }
+});
+
+// STEP 2: Verify Code
+verifyCodeBtn.addEventListener('click', async () => {
+    const code = codeInput.value.trim();
+
+    if (!code) {
+        showError('code-error', 'Please enter the verification code');
+        return;
+    }
+
+    if (code.length !== 6 || !/^\d+$/.test(code)) {
+        showError('code-error', 'Code must be 6 digits');
+        return;
+    }
+
+    setLoading('verify-code', true);
+    hideError('code-error');
+
+    try {
+        const response = await fetch('/api/password-reset/verify-code', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            verificationCode = code;
+
+            // Complete step 2
+            completeStep('code');
+            revealStep('password');
+
+            // Focus password input
+            passwordInput.focus();
+        } else {
+            showError('code-error', data.message || 'Invalid code');
+        }
+    } catch (error) {
+        showError('code-error', 'Network error. Please try again.');
+    } finally {
+        setLoading('verify-code', false);
+    }
+});
+
+// STEP 3: Reset Password
+resetPasswordBtn.addEventListener('click', async () => {
+    const password = passwordInput.value;
+
+    if (!password) {
+        showError('password-error', 'Please enter a new password');
+        return;
+    }
+
+    if (!checkAllRequirements(password)) {
+        showError('password-error', 'Password must meet all requirements');
+        return;
+    }
+
+    setLoading('reset-password', true);
+    hideError('password-error');
+
+    try {
+        const response = await fetch('/api/password-reset/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: userEmail,
+                code: verificationCode,
+                password: password
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            // Redirect to success page
+            window.location.href = '/password-reset-success';
+        } else {
+            if (data.error === 'expired') {
+                showError('password-error', data.message + ' <a href="#" onclick="location.reload()" style="color: #00ff00; text-decoration: underline;">Start over</a>');
+            } else {
+                showError('password-error', data.message || 'Failed to reset password');
+            }
+        }
+    } catch (error) {
+        showError('password-error', 'Network error. Please try again.');
+    } finally {
+        setLoading('reset-password', false);
+    }
+});
+
+// Password requirement checking
+passwordInput.addEventListener('input', () => {
+    const password = passwordInput.value;
+    let allMet = true;
+
+    for (const [key, req] of Object.entries(requirements)) {
+        const element = document.getElementById(req.id);
+        const met = req.regex.test(password);
+
+        if (met) {
+            element.classList.add('met');
+            element.querySelector('.req-icon').textContent = '✓';
+        } else {
+            element.classList.remove('met');
+            element.querySelector('.req-icon').textContent = '✗';
+            allMet = false;
+        }
+    }
+
+    resetPasswordBtn.disabled = !allMet;
+});
+
+// Toggle password visibility
+togglePasswordBtn.addEventListener('click', () => {
+    if (passwordInput.type === 'password') {
+        passwordInput.type = 'text';
+        togglePasswordBtn.textContent = '👁';
+    } else {
+        passwordInput.type = 'password';
+        togglePasswordBtn.textContent = '👁';
+    }
+});
+
+// Resend code
+resendLink.addEventListener('click', async (e) => {
+    e.preventDefault();
+
+    if (resendCooldown > 0) {
+        return;
+    }
+
+    setLoading('send-code', true);
+
+    try {
+        const response = await fetch('/api/password-reset/send-code', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: userEmail })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+            document.getElementById('code-success').style.display = 'block';
+            document.getElementById('code-destination').textContent = data.destination;
+            startResendCooldown();
+            hideError('code-error');
+        } else {
+            showError('code-error', data.message || 'Failed to resend code');
+        }
+    } catch (error) {
+        showError('code-error', 'Network error. Please try again.');
+    } finally {
+        setLoading('send-code', false);
+    }
+});
+
+// Helper functions
+function completeStep(step) {
+    const stepEl = document.getElementById(`step-${step}`);
+    stepEl.classList.add('completed');
+    stepEl.classList.remove('active');
+    document.getElementById(`${step}-check`).style.display = 'inline';
+
+    // Disable inputs
+    const content = document.getElementById(`${step}-content`);
+    const inputs = content.querySelectorAll('input, button');
+    inputs.forEach(input => input.disabled = true);
+}
+
+function revealStep(step) {
+    const stepEl = document.getElementById(`step-${step}`);
+    stepEl.style.display = 'block';
+    stepEl.classList.add('active');
+
+    // Smooth scroll to step
+    setTimeout(() => {
+        stepEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 100);
+}
+
+function showError(errorId, message) {
+    const errorEl = document.getElementById(errorId);
+    errorEl.innerHTML = `<strong>Error:</strong> ${message}`;
+    errorEl.style.display = 'block';
+}
+
+function hideError(errorId) {
+    document.getElementById(errorId).style.display = 'none';
+}
+
+function setLoading(buttonPrefix, isLoading) {
+    const textEl = document.getElementById(`${buttonPrefix}-text`);
+    const loadingEl = document.getElementById(`${buttonPrefix}-loading`);
+    const btnEl = document.getElementById(`${buttonPrefix}-btn`);
+
+    if (isLoading) {
+        textEl.style.display = 'none';
+        loadingEl.style.display = 'inline';
+        btnEl.disabled = true;
+    } else {
+        textEl.style.display = 'inline';
+        loadingEl.style.display = 'none';
+        btnEl.disabled = false;
+    }
+}
+
+function checkAllRequirements(password) {
+    return Object.values(requirements).every(req => req.regex.test(password));
+}
+
+function startResendCooldown() {
+    resendCooldown = 60;
+    resendLink.style.display = 'none';
+    document.getElementById('resend-cooldown').style.display = 'inline';
+
+    if (resendInterval) clearInterval(resendInterval);
+
+    resendInterval = setInterval(() => {
+        resendCooldown--;
+        document.getElementById('resend-cooldown').textContent = `(Wait ${resendCooldown}s)`;
+
+        if (resendCooldown <= 0) {
+            clearInterval(resendInterval);
+            resendLink.style.display = 'inline';
+            document.getElementById('resend-cooldown').style.display = 'none';
+        }
+    }, 1000);
+}
+
+// Enable enter key on email input
+emailInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') sendCodeBtn.click();
+});
+
+// Enable enter key on code input
+codeInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') verifyCodeBtn.click();
+});
+
+// Enable enter key on password input
+passwordInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter' && !resetPasswordBtn.disabled) resetPasswordBtn.click();
+});
+</script>
+{% endblock %}
+EOFRESETFLOW
 
 # Create password reset success template
+cat > /opt/employee-portal/templates/password_reset_success.html << 'EOFRESETSUCC'
+{% extends "base.html" %}
+
+{% block title %}PASSWORD RESET SUCCESSFUL - CAPSULE PORTAL{% endblock %}
+
+{% block content %}
+<div class="crt-container">
+    <pre class="ascii-art">
+ ███████╗██╗   ██╗ ██████╗ ██████╗███████╗███████╗███████╗██╗
+ ██╔════╝██║   ██║██╔════╝██╔════╝██╔════╝██╔════╝██╔════╝██║
+ ███████╗██║   ██║██║     ██║     █████╗  ███████╗███████╗██║
+ ╚════██║██║   ██║██║     ██║     ██╔══╝  ╚════██║╚════██║╚═╝
+ ███████║╚██████╔╝╚██████╗╚██████╗███████╗███████║███████║██╗
+ ╚══════╝ ╚═════╝  ╚═════╝ ╚═════╝╚══════╝╚══════╝╚══════╝╚═╝
+    </pre>
+
+    <div class="content-box">
+        <div style="text-align: center; padding: 2rem 0;">
+            <div style="font-size: 4rem; color: #00ff00; margin-bottom: 1rem;">✓</div>
+            <h2 style="color: #00ff00; margin-bottom: 1rem;">PASSWORD RESET SUCCESSFUL!</h2>
+        </div>
+
+        <div class="info-section" style="background: rgba(0, 255, 0, 0.1); border: 2px solid #00ff00; padding: 2rem;">
+            <p style="font-size: 1.1rem; margin-bottom: 1rem;">
+                <strong>Your password has been reset successfully.</strong>
+            </p>
+            <p style="opacity: 0.9; margin-bottom: 1.5rem;">
+                You can now log in with your new password.
+            </p>
+        </div>
+
+        <div class="warning-box" style="margin-top: 2rem; background: rgba(255, 200, 0, 0.1); border: 2px solid #ffc107; padding: 2rem;">
+            <h3 style="color: #ffc107; margin-bottom: 1rem;">⚠️ IMPORTANT - NEXT STEPS</h3>
+            <p style="margin-bottom: 1rem;"><strong>Follow these steps carefully to avoid login errors:</strong></p>
+            <ol style="margin-left: 2rem; line-height: 2; font-size: 0.95rem;">
+                <li><strong>Click the "LOGIN WITH NEW PASSWORD" button below</strong><br>
+                    <span style="opacity: 0.8; font-size: 0.85rem;">This will take you to the Cognito login page</span>
+                </li>
+                <li><strong>Enter your email and your NEW password</strong><br>
+                    <span style="opacity: 0.8; font-size: 0.85rem;">Use the password you just created, not your old one</span>
+                </li>
+                <li><strong>Click "Sign in"</strong><br>
+                    <span style="opacity: 0.8; font-size: 0.85rem;">You will be logged into the portal</span>
+                </li>
+            </ol>
+
+            <div style="background: rgba(255, 0, 0, 0.2); border-left: 3px solid #ff0000; padding: 1rem; margin-top: 1.5rem;">
+                <p style="color: #ff6b6b; font-weight: bold; margin-bottom: 0.5rem;">❌ DO NOT:</p>
+                <ul style="margin-left: 2rem; font-size: 0.9rem; line-height: 1.8;">
+                    <li>Click "Forgot your password?" on the login page (you just reset it!)</li>
+                    <li>Use your browser's back button after clicking login</li>
+                    <li>Try to bookmark or manually navigate to OAuth callback URLs</li>
+                </ul>
+            </div>
+        </div>
+
+        <div style="text-align: center; margin-top: 3rem;">
+            <a href="/" class="btn-primary" style="display: inline-block; padding: 1rem 2rem; font-size: 1.1rem;">
+                🔐 LOGIN WITH NEW PASSWORD
+            </a>
+            <p style="margin-top: 1rem; opacity: 0.7; font-size: 0.85rem;">
+                This will take you to the login page where you'll enter your new password
+            </p>
+        </div>
+
+        <div class="info-section" style="margin-top: 2rem;">
+            <h3>💡 SECURITY TIPS</h3>
+            <ul style="margin-left: 2rem; margin-top: 1rem; line-height: 1.8;">
+                <li>Update your password manager with the new password</li>
+                <li>Don't reuse this password on other websites</li>
+                <li>Enable Multi-Factor Authentication (MFA) for extra security</li>
+                <li>Never share your password with anyone</li>
+            </ul>
+        </div>
+
+        <div class="nav-links" style="margin-top: 2rem;">
+            <p style="text-align: center; opacity: 0.7; font-size: 0.9rem;">
+                Having trouble? Contact your administrator for help.
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+EOFRESETSUCC
 
 # Set ownership
 chown -R app:app /opt/employee-portal

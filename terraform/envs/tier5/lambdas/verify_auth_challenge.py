@@ -35,11 +35,15 @@ def lambda_handler(event, context):
     email = event['request']['userAttributes'].get('email', 'unknown')
 
     print(f"Verifying code for user: {email}")
-    print(f"User entered: {user_code}")
+    print(f"User entered: '{user_code}' (type: {type(user_code)})")
+    print(f"Expected: '{expected_code}' (type: {type(expected_code)})")
+    print(f"User code stripped: '{user_code.strip() if user_code else None}'")
+    print(f"Expected code stripped: '{expected_code.strip() if expected_code else None}'")
 
     # Validate code
     if user_code and expected_code and user_code.strip() == expected_code.strip():
-        print("Code is CORRECT")
+        print("Code is CORRECT - Match found!")
+        print(f"Comparison: '{user_code.strip()}' == '{expected_code.strip()}'")
         event['response']['answerCorrect'] = True
 
         # Delete code from DynamoDB to prevent reuse
@@ -58,7 +62,9 @@ def lambda_handler(event, context):
             # Don't fail authentication if deletion fails
 
     else:
-        print("Code is INCORRECT")
+        print("Code is INCORRECT - No match")
+        print(f"User provided: {bool(user_code)}, Expected exists: {bool(expected_code)}")
+        print(f"String comparison: '{user_code.strip() if user_code else 'None'}' != '{expected_code.strip() if expected_code else 'None'}'")
         event['response']['answerCorrect'] = False
 
     print(f"Verification result: {event['response']['answerCorrect']}")

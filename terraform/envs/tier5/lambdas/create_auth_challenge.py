@@ -12,7 +12,7 @@ This Lambda:
 import os
 import random
 import boto3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 def lambda_handler(event, context):
@@ -46,8 +46,8 @@ def lambda_handler(event, context):
         table_name = os.environ['MFA_CODES_TABLE']
         table = dynamodb.Table(table_name)
 
-        # Calculate expiry timestamp (5 minutes from now)
-        expiry_time = datetime.now() + timedelta(minutes=5)
+        # Calculate expiry timestamp (5 minutes from now) - use UTC
+        expiry_time = datetime.now(timezone.utc) + timedelta(minutes=5)
         ttl = int(expiry_time.timestamp())
 
         table.put_item(
@@ -55,7 +55,7 @@ def lambda_handler(event, context):
                 'username': email,
                 'code': code,
                 'ttl': ttl,
-                'created_at': datetime.now().isoformat()
+                'created_at': datetime.now(timezone.utc).isoformat()
             }
         )
         print(f"Stored code in DynamoDB (TTL: {ttl})")

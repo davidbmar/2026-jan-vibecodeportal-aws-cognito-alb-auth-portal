@@ -18,6 +18,11 @@ output "cognito_user_pool_id" {
   value       = aws_cognito_user_pool.main.id
 }
 
+output "aws_region" {
+  description = "AWS Region"
+  value       = var.aws_region
+}
+
 output "cognito_app_client_id" {
   description = "ID of the Cognito App Client"
   value       = aws_cognito_user_pool_client.main.id
