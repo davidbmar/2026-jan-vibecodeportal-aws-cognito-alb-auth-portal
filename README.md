@@ -123,48 +123,48 @@ After deployment, set permanent passwords for the users. The deploy script outpu
 # Get the User Pool ID from terraform output
 USER_POOL_ID=$(cd terraform/envs/tier5 && terraform output -raw cognito_user_pool_id)
 
-# Set password for dmar@capsule.com
+# Set password for sxxxxxxxxx@myuser.com
 aws cognito-idp admin-set-user-password \
   --user-pool-id $USER_POOL_ID \
-  --username dmar@capsule.com \
-  --password "YourSecurePassword123!" \
+  --username abckjY@xxxxxxxx.com \
+  --password "YourSecurepw23!" \
   --permanent \
   --region us-east-1
 
-# Set password for jahn@capsule.com
+# Set password for sxxxxxxxxx@myuser.com
 aws cognito-idp admin-set-user-password \
   --user-pool-id $USER_POOL_ID \
-  --username jahn@capsule.com \
-  --password "YourSecurePassword123!" \
+  --username abckjY@xxxxxxxx.com \
+  --password "YourSecurepw23!" \
   --permanent \
   --region us-east-1
 
-# Set password for ahatcher@capsule.com
+# Set password for sxxxxxxxxx@myuser.com
 aws cognito-idp admin-set-user-password \
   --user-pool-id $USER_POOL_ID \
-  --username ahatcher@capsule.com \
-  --password "YourSecurePassword123!" \
+  --username abckjY@xxxxxxxx.com \
+  --password "YourSecurepw23!" \
   --permanent \
   --region us-east-1
 
-# Set password for peter@capsule.com
+# Set password for sxxxxxxxxx@myuser.com
 aws cognito-idp admin-set-user-password \
   --user-pool-id $USER_POOL_ID \
-  --username peter@capsule.com \
-  --password "YourSecurePassword123!" \
+  --username abckjY@xxxxxxxx.com \
+  --password "YourSecurepw23!" \
   --permanent \
   --region us-east-1
 
-# Set password for sdedakia@capsule.com
+# Set password for sxxxxxxxxx@myuser.com
 aws cognito-idp admin-set-user-password \
   --user-pool-id $USER_POOL_ID \
-  --username sdedakia@capsule.com \
-  --password "YourSecurePassword123!" \
+  --username abckjY@xxxxxxxx.com \
+  --password "YourSecurepw23!" \
   --permanent \
   --region us-east-1
 ```
 
-**Note**: Replace `YourSecurePassword123!` with a secure password that meets the password policy requirements:
+**Note**: Replace `replacePasswordd123!` with a secure password that meets the password policy requirements:
 - Minimum 8 characters
 - Contains uppercase letter
 - Contains lowercase letter
